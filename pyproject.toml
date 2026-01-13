@@ -1,0 +1,54 @@
+[project]
+name = "coral"
+version = "0.1.0"
+description = "Coral SDK + CLI for running Python remotely"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Coral Contributors" }]
+license = { text = "Apache-2.0" }
+keywords = ["remote", "compute", "sdk", "gcp", "containers"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+  "cloudpickle>=3.0",
+  "pathspec>=0.12",
+  "rich>=13.7",
+  "typer>=0.12",
+  "tomli>=2.0; python_version < '3.11'",
+  "requests>=2.32",
+  "google-auth>=2.26",
+  "google-cloud-storage>=2.14",
+  "google-cloud-batch>=0.17",
+  "google-cloud-logging>=3.10",
+  "google-cloud-build>=3.8",
+  "google-cloud-artifactregistry>=1.13",
+]
+
+[project.scripts]
+coral = "coral_cli.main:app"
+
+[project.entry-points."coral.providers"]
+gcp = "coral_providers_gcp.provider:GCPProvider"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+  "coral",
+  "coral.spec",
+  "coral.providers",
+  "coral_cli",
+  "coral_cli.commands",
+  "coral_runtime",
+  "coral_providers_gcp",
+]
+
+[tool.uv]
+package = true
