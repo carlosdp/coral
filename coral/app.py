@@ -35,10 +35,18 @@ class FunctionHandle:
 
 
 class App:
-    def __init__(self, name: str, image: Optional[ImageSpec] = None, include_source: bool = True):
+    def __init__(
+        self,
+        name: str,
+        image: Optional[ImageSpec] = None,
+        include_source: bool = True,
+    ):
+        from coral.image import Image
+
+        image_spec = image.spec if isinstance(image, Image) else image
         self._spec = AppSpec(
             name=name,
-            image=image or ImageSpec(base_image="python:3.11-slim"),
+            image=image_spec or ImageSpec(base_image="python:3.11-slim"),
             include_source=include_source,
         )
         self._functions: Dict[str, FunctionHandle] = {}
