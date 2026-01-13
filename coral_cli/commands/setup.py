@@ -39,6 +39,13 @@ def _run_gcloud_adc_login() -> None:
     )
 
 
+def _run_gcloud_user_login() -> None:
+    subprocess.run(
+        ["gcloud", "auth", "login"],
+        check=True,
+    )
+
+
 def _adc_file_exists() -> bool:
     env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if env_path:
@@ -63,7 +70,12 @@ def _list_projects() -> list[dict[str, Any]]:
 
 
 def _select_project(console) -> str:
-    projects = _list_projects()
+    try:
+        projects = _list_projects()
+    except subprocess.CalledProcessError:
+        console.print("[warn]gcloud projects list failed. Running gcloud auth login...[/warn]")
+        _run_gcloud_user_login()
+        projects = _list_projects()
     if not projects:
         return typer.prompt("GCP project ID")
     console.print("[info]Available GCP projects:[/info]")
