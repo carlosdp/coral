@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -33,6 +35,14 @@ def _run_gcloud_adc_login() -> None:
     )
 
 
+def _adc_file_exists() -> bool:
+    env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if env_path:
+        return Path(env_path).expanduser().exists()
+    default_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+    return default_path.exists()
+
+
 @app.command()
 def main(
     profile: Optional[str] = typer.Option(None, "--profile", help="Config profile"),
@@ -51,6 +61,12 @@ def main(
 
     if _credentials_valid():
         console.print("[success]GCP credentials are now valid.[/success]")
+        return
+    if _adc_file_exists():
+        console.print(
+            "[warn]ADC file created, but credential validation failed. "
+            "Proceeding; try again if API calls fail.[/warn]"
+        )
         return
 
     raise RuntimeError(
