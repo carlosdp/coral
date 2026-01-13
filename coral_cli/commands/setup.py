@@ -43,7 +43,7 @@ def _adc_file_exists() -> bool:
     return default_path.exists()
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
     profile: Optional[str] = typer.Option(None, "--profile", help="Config profile"),
 ):
