@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from coral.config import Profile
@@ -31,6 +32,11 @@ class GCPProvider(Provider):
 
     def configure(self, profile: Profile) -> None:
         data = profile.data
+        credentials_path = data.get("credentials_path")
+        if credentials_path:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser(
+                credentials_path
+            )
         missing = [k for k in ["project", "region", "artifact_repo", "gcs_bucket"] if k not in data]
         if missing:
             raise ConfigError(f"Missing GCP config keys: {', '.join(missing)}")

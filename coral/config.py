@@ -49,6 +49,32 @@ def save_config(data: Dict[str, Any]) -> None:
     CONFIG_PATH.write_text("\n".join(lines))
 
 
+def write_config(data: Dict[str, Any]) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = ["# Coral configuration", ""]
+    profiles = data.get("profile", {})
+    for profile_name, profile_data in profiles.items():
+        lines.append(f"[profile.{profile_name}]")
+        provider = profile_data.get("provider")
+        if provider:
+            lines.append(f"provider = \"{provider}\"")
+        lines.append("")
+        for provider_name, provider_data in profile_data.items():
+            if provider_name == "provider":
+                continue
+            lines.append(f"[profile.{profile_name}.{provider_name}]")
+            for key, value in provider_data.items():
+                if isinstance(value, bool):
+                    value_str = "true" if value else "false"
+                elif isinstance(value, (int, float)):
+                    value_str = str(value)
+                else:
+                    value_str = f"\"{value}\""
+                lines.append(f"{key} = {value_str}")
+            lines.append("")
+    CONFIG_PATH.write_text("\n".join(lines))
+
+
 def get_profile(name: str | None) -> Profile:
     data = load_config()
     profiles = data.get("profile", {})
