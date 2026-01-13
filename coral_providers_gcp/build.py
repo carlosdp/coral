@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from google.cloud import artifactregistry_v1, build_v1, storage
+from google.cloud import artifactregistry_v1, storage
+from google.cloud.devtools import cloudbuild_v1 as build_v1
 
 from coral.image import build_plan, build_plan_hash
 from coral.providers.base import ImageRef
