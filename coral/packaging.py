@@ -90,7 +90,6 @@ def create_bundle(
     file_entries: List[Tuple[str, Path]] = []
     for root in roots:
         spec = _spec_for_root(root, extra=extra_ignores)
-        base = root.parent if root.is_dir() else root.parent
         for file_path, rel in _iter_files(root, spec):
             tar_path = str(Path(root.name) / rel) if root.is_dir() else str(Path(root.name))
             file_entries.append((tar_path, file_path))

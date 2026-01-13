@@ -5,16 +5,16 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from coral import __version__
-from coral.app import App, FunctionHandle
+from coral.app import App
 from coral.errors import CoralError
 from coral.image import build_plan_hash
 from coral.packaging import BundleResult, create_bundle
 from coral.providers.base import BundleRef, ImageRef, RunHandle, RunResult
 from coral.serialization import SERIALIZATION_VERSION, dumps
-from coral.spec import CallSpec, FunctionSpec, ImageSpec, LocalSource
+from coral.spec import CallSpec, FunctionSpec, ImageSpec
 
 CACHE_DIR = Path.home() / ".coral" / "cache"
 BUNDLE_INDEX = CACHE_DIR / "bundles.json"
@@ -112,13 +112,21 @@ class RunSession:
         image_cache = self._load_index(IMAGE_INDEX)
         if image_hash in image_cache:
             cached = image_cache[image_hash]
-            self._image_ref = ImageRef(uri=cached["uri"], digest=cached["digest"], metadata=cached.get("metadata", {}))
+            self._image_ref = ImageRef(
+                uri=cached["uri"],
+                digest=cached["digest"],
+                metadata=cached.get("metadata", {}),
+            )
             return self._image_ref
 
         _sync_sources, copy_sources, _sync_ignores = self._resolve_local_sources(image)
         builder = self.provider.get_builder()
         image_ref = builder.resolve_image(image, copy_sources=copy_sources)
-        image_cache[image_hash] = {"uri": image_ref.uri, "digest": image_ref.digest, "metadata": image_ref.metadata}
+        image_cache[image_hash] = {
+            "uri": image_ref.uri,
+            "digest": image_ref.digest,
+            "metadata": image_ref.metadata,
+        }
         self._save_index(IMAGE_INDEX, image_cache)
         self._image_ref = image_ref
         return image_ref
@@ -144,11 +152,26 @@ class RunSession:
             serialization=SERIALIZATION_VERSION,
             result_ref=result_uri,
             stdout_mode="stream",
-            log_labels={"coral.run_id": self.run_id, "coral.app": self.app.name, "coral.call_id": call_id},
+            log_labels={
+                "coral.run_id": self.run_id,
+                "coral.app": self.app.name,
+                "coral.call_id": call_id,
+            },
         )
         env = dict(self.env or {})
-        labels = {"coral.run_id": self.run_id, "coral.app": self.app.name, "coral.call_id": call_id}
-        handle = self.provider.get_executor().submit(call_spec, image_ref, bundle_ref, spec.resources, env, labels)
+        labels = {
+            "coral.run_id": self.run_id,
+            "coral.app": self.app.name,
+            "coral.call_id": call_id,
+        }
+        handle = self.provider.get_executor().submit(
+            call_spec,
+            image_ref,
+            bundle_ref,
+            spec.resources,
+            env,
+            labels,
+        )
         return handle
 
     def wait(self, handle: RunHandle) -> RunResult:

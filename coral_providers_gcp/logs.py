@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import datetime as dt
+import time
 from dataclasses import dataclass
 from typing import Iterable
-import time
 
 from google.cloud import logging_v2
 

@@ -44,7 +44,11 @@ def main(
     provider: Optional[str] = typer.Option(None, "--provider", help="Provider name"),
     profile: Optional[str] = typer.Option(None, "--profile", help="Config profile"),
     detach: bool = typer.Option(False, "--detach", help="Do not wait for completion"),
-    write_result: Optional[Path] = typer.Option(None, "--write-result", help="Write result bytes to file"),
+    write_result: Optional[Path] = typer.Option(
+        None,
+        "--write-result",
+        help="Write result bytes to file",
+    ),
     env: List[str] = typer.Option([], "--env", help="Extra env vars KEY=VALUE"),
     gpu: Optional[str] = typer.Option(None, "--gpu", help="Override GPU spec (e.g. A100:1)"),
 ):

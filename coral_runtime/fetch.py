@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import tarfile
 from pathlib import Path
-from typing import Optional
 
 import requests
 from google.cloud import storage

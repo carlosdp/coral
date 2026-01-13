@@ -4,11 +4,11 @@ import base64
 import os
 from pathlib import Path
 
-from coral_runtime.serialization import dumps
-from coral_runtime.spec import CallSpec
 from coral_runtime.fetch import fetch_bundle
 from coral_runtime.invoke import invoke
 from coral_runtime.io import write_bytes
+from coral_runtime.serialization import dumps
+from coral_runtime.spec import CallSpec
 
 
 def main() -> None:

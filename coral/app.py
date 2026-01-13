@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import inspect
-import uuid
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
 from coral.errors import CoralError
 from coral.serialization import loads
 from coral.spec import AppSpec, FunctionSpec, ImageSpec, ResourceSpec
-
 
 _REGISTERED_APPS = []
 
@@ -38,7 +36,11 @@ class FunctionHandle:
 
 class App:
     def __init__(self, name: str, image: Optional[ImageSpec] = None, include_source: bool = True):
-        self._spec = AppSpec(name=name, image=image or ImageSpec(base_image="python:3.11-slim"), include_source=include_source)
+        self._spec = AppSpec(
+            name=name,
+            image=image or ImageSpec(base_image="python:3.11-slim"),
+            include_source=include_source,
+        )
         self._functions: Dict[str, FunctionHandle] = {}
         self._local_entrypoints: Dict[str, Callable] = {}
         self._session = None
@@ -75,7 +77,13 @@ class App:
             module = fn.__module__
             qualname = fn.__qualname__
             source_file = inspect.getsourcefile(fn) or ""
-            resources = ResourceSpec(cpu=cpu, memory=memory, gpu=gpu, timeout=timeout, retries=retries)
+            resources = ResourceSpec(
+                cpu=cpu,
+                memory=memory,
+                gpu=gpu,
+                timeout=timeout,
+                retries=retries,
+            )
             spec = FunctionSpec(
                 name=fn.__name__,
                 module=module,

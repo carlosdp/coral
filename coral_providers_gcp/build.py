@@ -4,11 +4,9 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable
 
-from google.cloud import artifactregistry_v1
-from google.cloud import build_v1
-from google.cloud import storage
+from google.cloud import artifactregistry_v1, build_v1, storage
 
 from coral.image import build_plan, build_plan_hash
 from coral.providers.base import ImageRef
@@ -32,11 +30,17 @@ class CloudBuildImageBuilder:
         return storage.Client(project=self.project)
 
     def _image_uri(self, image_hash: str) -> str:
-        return f"{self.region}-docker.pkg.dev/{self.project}/{self.artifact_repo}/coral:{image_hash}"
+        return (
+            f"{self.region}-docker.pkg.dev/{self.project}/"
+            f"{self.artifact_repo}/coral:{image_hash}"
+        )
 
     def _image_digest(self, image_hash: str) -> str | None:
         client = self._artifact_client()
-        parent = f"projects/{self.project}/locations/{self.region}/repositories/{self.artifact_repo}"
+        parent = (
+            f"projects/{self.project}/locations/{self.region}/"
+            f"repositories/{self.artifact_repo}"
+        )
         for image in client.list_docker_images(parent=parent):
             for tag in image.tags:
                 if tag.endswith(f":{image_hash}"):
@@ -78,7 +82,9 @@ class CloudBuildImageBuilder:
         ]
         if apt:
             lines.append(
-                "RUN apt-get update && apt-get install -y " + " ".join(apt) + " && rm -rf /var/lib/apt/lists/*"
+                "RUN apt-get update && apt-get install -y "
+                + " ".join(apt)
+                + " && rm -rf /var/lib/apt/lists/*"
             )
         if pip:
             lines.append("RUN python -m pip install --no-cache-dir " + " ".join(pip))
@@ -112,7 +118,10 @@ class CloudBuildImageBuilder:
         source = build_v1.StorageSource(bucket=self.gcs_bucket, object_=blob_name)
         build = build_v1.Build(
             steps=[
-                build_v1.BuildStep(name="gcr.io/cloud-builders/docker", args=["build", "-t", image_uri, "."])
+                build_v1.BuildStep(
+                    name="gcr.io/cloud-builders/docker",
+                    args=["build", "-t", image_uri, "."],
+                )
             ],
             images=[image_uri],
             source=build_v1.Source(storage_source=source),

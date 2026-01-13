@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 from coral.spec import ImageSpec, LocalSource
 
@@ -37,7 +37,12 @@ class Image:
     def workdir(self, path: str) -> "Image":
         return Image(replace(self._spec, workdir=path))
 
-    def add_local_python_source(self, module: str, mode: str = "sync", ignore: List[str] | None = None) -> "Image":
+    def add_local_python_source(
+        self,
+        module: str,
+        mode: str = "sync",
+        ignore: List[str] | None = None,
+    ) -> "Image":
         ignore = ignore or []
         sources = self._spec.local_sources + [
             LocalSource(name=module, path="", mode=mode, ignore=ignore)

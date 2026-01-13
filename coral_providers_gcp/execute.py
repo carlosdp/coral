@@ -3,14 +3,13 @@ from __future__ import annotations
 import base64
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Dict
 
 from google.cloud import batch_v1
 from google.protobuf import duration_pb2
 
 from coral.providers.base import RunHandle, RunResult
 from coral.spec import CallSpec, ResourceSpec
-
 
 GPU_TYPE_MAP = {
     "A100": "nvidia-tesla-a100",
@@ -124,7 +123,11 @@ class BatchExecutor:
         job_id = self._job_id(call_spec.log_labels.get("coral.run_id", "run"), call_spec.call_id)
         client = self._client()
         client.create_job(parent=self._job_parent(), job=job, job_id=job_id)
-        return RunHandle(run_id=call_spec.log_labels.get("coral.run_id", ""), call_id=call_spec.call_id, provider_ref=job_id)
+        return RunHandle(
+            run_id=call_spec.log_labels.get("coral.run_id", ""),
+            call_id=call_spec.call_id,
+            provider_ref=job_id,
+        )
 
     def wait(self, handle: RunHandle) -> RunResult:
         client = self._client()

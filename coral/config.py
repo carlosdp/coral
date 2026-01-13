@@ -31,7 +31,21 @@ def load_config() -> Dict[str, Any]:
 
 def save_config(data: Dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    lines = ["# Coral configuration", "", "[profile.default]", "provider = \"gcp\"", "", "[profile.default.gcp]", "project = \"my-gcp-project\"", "region = \"us-central1\"", "artifact_repo = \"coral\"", "gcs_bucket = \"coral-artifacts-myproj\"", "execution = \"batch\"", "service_account = \"coral-runner@myproj.iam.gserviceaccount.com\"", ""]
+    lines = [
+        "# Coral configuration",
+        "",
+        "[profile.default]",
+        "provider = \"gcp\"",
+        "",
+        "[profile.default.gcp]",
+        "project = \"my-gcp-project\"",
+        "region = \"us-central1\"",
+        "artifact_repo = \"coral\"",
+        "gcs_bucket = \"coral-artifacts-myproj\"",
+        "execution = \"batch\"",
+        "service_account = \"coral-runner@myproj.iam.gserviceaccount.com\"",
+        "",
+    ]
     CONFIG_PATH.write_text("\n".join(lines))
 
 
