@@ -36,7 +36,7 @@ def _parse_env(values: List[str]) -> dict:
     return env
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
     ref: str = typer.Argument(..., help="Function reference, e.g. path/to/file.py::func"),
     args: List[str] = typer.Argument([], help="Arguments passed to the function"),

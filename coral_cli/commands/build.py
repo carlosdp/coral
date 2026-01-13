@@ -23,7 +23,7 @@ def _select_app():
     return apps[0].app
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
     ref: str = typer.Argument(..., help="Function reference"),
     module: bool = typer.Option(False, "-m", help="Treat ref as module path"),

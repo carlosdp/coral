@@ -12,7 +12,7 @@ from coral.providers.base import RunHandle
 app = typer.Typer(help="Stream logs for a run")
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
     run_id: str = typer.Argument(..., help="Run ID"),
     provider: Optional[str] = typer.Option(None, "--provider", help="Provider name"),
