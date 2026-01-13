@@ -45,7 +45,7 @@ def _load_ignore_patterns(root: Path, extra: Iterable[str] | None = None) -> Lis
 
 def _spec_for_root(root: Path, extra: Iterable[str] | None = None) -> pathspec.PathSpec:
     patterns = _load_ignore_patterns(root, extra)
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    return pathspec.PathSpec.from_lines("gitignore", patterns)
 
 
 def _iter_files(root: Path, spec: pathspec.PathSpec) -> Iterable[Tuple[Path, str]]:
