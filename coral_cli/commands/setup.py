@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import random
 import shutil
@@ -10,7 +9,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request
+from google.cloud import resourcemanager_v3
 
 from coral.config import load_config, write_config
 from coral.errors import ConfigError
@@ -39,13 +40,6 @@ def _run_gcloud_adc_login() -> None:
     )
 
 
-def _run_gcloud_user_login() -> None:
-    subprocess.run(
-        ["gcloud", "auth", "login"],
-        check=True,
-    )
-
-
 def _adc_file_exists() -> bool:
     env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if env_path:
@@ -59,23 +53,31 @@ def _require_gcloud() -> None:
         raise RuntimeError("gcloud CLI not found. Install gcloud to use coral setup.")
 
 
-def _run_capture(cmd: list[str]) -> str:
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    return result.stdout
-
-
 def _list_projects() -> list[dict[str, Any]]:
-    output = _run_capture(["gcloud", "projects", "list", "--format=json"])
-    return json.loads(output) if output.strip() else []
+    creds, _ = google_auth_default()
+    client = resourcemanager_v3.ProjectsClient(credentials=creds)
+    projects = []
+    for project in client.search_projects():
+        projects.append(
+            {
+                "projectId": project.project_id,
+                "name": project.display_name,
+                "state": project.state.name,
+            }
+        )
+    return projects
 
 
 def _select_project(console) -> str:
     try:
         projects = _list_projects()
-    except subprocess.CalledProcessError:
-        console.print("[warn]gcloud projects list failed. Running gcloud auth login...[/warn]")
-        _run_gcloud_user_login()
-        projects = _list_projects()
+    except Exception as exc:
+        console.print(
+            "[warn]Project listing failed via Resource Manager API. "
+            "Please enter a project ID manually.[/warn]"
+        )
+        console.print(f"[warn]{exc}[/warn]")
+        return typer.prompt("GCP project ID")
     if not projects:
         return typer.prompt("GCP project ID")
     console.print("[info]Available GCP projects:[/info]")

@@ -27,6 +27,7 @@ dependencies = [
   "google-cloud-logging>=3.10",
   "google-cloud-build>=3.8",
   "google-cloud-artifact-registry>=1.13",
+  "google-cloud-resource-manager>=1.12",
 ]
 
 [project.optional-dependencies]

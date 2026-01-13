@@ -147,6 +147,7 @@ dependencies = [
     { name = "google-cloud-batch" },
     { name = "google-cloud-build" },
     { name = "google-cloud-logging" },
+    { name = "google-cloud-resource-manager" },
     { name = "google-cloud-storage" },
     { name = "pathspec" },
     { name = "requests" },
@@ -169,6 +170,7 @@ requires-dist = [
     { name = "google-cloud-batch", specifier = ">=0.17" },
     { name = "google-cloud-build", specifier = ">=3.8" },
     { name = "google-cloud-logging", specifier = ">=3.10" },
+    { name = "google-cloud-resource-manager", specifier = ">=1.12" },
     { name = "google-cloud-storage", specifier = ">=2.14" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.3" },
@@ -333,6 +335,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7f/47/31ef0261802fe8b37c221392e1d6ff01d30b03dce5e20e77fc7d57ddf8a3/google_cloud_logging-3.13.0.tar.gz", hash = "sha256:3aae0573b1a1a4f59ecdf4571f4e7881b5823bd129fe469561c1c49a7fa8a4c1", size = 290169, upload-time = "2025-12-16T14:11:07.345Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/5a/778dca2e375171af4085554cb3bc643627717a7e4e1539842ced3afd6ec4/google_cloud_logging-3.13.0-py3-none-any.whl", hash = "sha256:f215e1c76ee29239c6cacf02443dffa985663c74bf47c9818854694805c6019f", size = 230518, upload-time = "2025-12-16T14:11:05.894Z" },
+]
+
+[[package]]
+name = "google-cloud-resource-manager"
+version = "1.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/19/b95d0e8814ce42522e434cdd85c0cb6236d874d9adf6685fc8e6d1fda9d1/google_cloud_resource_manager-1.15.0.tar.gz", hash = "sha256:3d0b78c3daa713f956d24e525b35e9e9a76d597c438837171304d431084cedaf", size = 449227, upload-time = "2025-10-20T14:57:01.108Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/93/5aef41a5f146ad4559dd7040ae5fa8e7ddcab4dfadbef6cb4b66d775e690/google_cloud_resource_manager-1.15.0-py3-none-any.whl", hash = "sha256:0ccde5db644b269ddfdf7b407a2c7b60bdbf459f8e666344a5285601d00c7f6d", size = 397151, upload-time = "2025-10-20T14:53:45.409Z" },
 ]
 
 [[package]]
