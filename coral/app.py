@@ -20,6 +20,7 @@ class FunctionHandle:
     name: str
     spec: FunctionSpec
     app: "App"
+    _fn: Callable | None = None
 
     def remote(self, *args, **kwargs):
         session = self.app._require_session()
@@ -101,6 +102,7 @@ class App:
                 image=image,
             )
             handle = FunctionHandle(name=fn.__name__, spec=spec, app=self)
+            handle._fn = fn
             self._functions[fn.__name__] = handle
             handle.__name__ = fn.__name__
             handle.__module__ = fn.__module__
