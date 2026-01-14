@@ -54,6 +54,9 @@ class CloudBuildImageBuilder:
         runtime_dest = context_dir / "runtime" / "coral_runtime"
         runtime_dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(runtime_src, runtime_dest)
+        coral_src = Path(__file__).resolve().parents[1] / "coral"
+        coral_dest = context_dir / "runtime" / "coral"
+        shutil.copytree(coral_src, coral_dest)
 
         copy_root = context_dir / "copy_src"
         copy_root.mkdir(parents=True, exist_ok=True)

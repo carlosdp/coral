@@ -1,6 +1,6 @@
 import typer
 
-from coral_cli.commands import build, config, logs, provider, run, setup, stop
+from coral_cli.commands import build, cache, config, logs, provider, run, setup, stop
 
 app = typer.Typer(help="Coral SDK CLI")
 app.add_typer(run.app, name="run")
@@ -10,6 +10,7 @@ app.add_typer(stop.app, name="stop")
 app.add_typer(provider.app, name="providers")
 app.add_typer(config.app, name="config")
 app.add_typer(setup.app, name="setup")
+app.add_typer(cache.app, name="cache")
 
 if __name__ == "__main__":
     app()
