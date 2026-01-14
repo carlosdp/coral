@@ -204,6 +204,8 @@ class RunSession:
             },
         )
         env = dict(self.env or {})
+        if self.verbose:
+            env["CORAL_VERBOSE"] = "1"
         labels = {
             "coral_run_id": self.run_id,
             "coral_app": self.app.name,

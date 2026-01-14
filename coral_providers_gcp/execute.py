@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import time
 from dataclasses import dataclass
 from typing import Dict
@@ -135,9 +136,14 @@ class BatchExecutor:
     def wait(self, handle: RunHandle) -> RunResult:
         client = self._client()
         name = f"{self._job_parent()}/jobs/{handle.provider_ref}"
+        verbose = bool(os.environ.get("CORAL_VERBOSE"))
+        last_state = None
         while True:
             job = client.get_job(name=name)
             state = job.status.state
+            if verbose and state != last_state:
+                print(f"[coral] Batch job state: {state.name} ({job.name})")
+                last_state = state
             if state in (batch_v1.JobStatus.State.SUCCEEDED, batch_v1.JobStatus.State.FAILED):
                 break
             time.sleep(5)
