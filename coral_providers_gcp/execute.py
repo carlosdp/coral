@@ -138,12 +138,21 @@ class BatchExecutor:
         name = f"{self._job_parent()}/jobs/{handle.provider_ref}"
         verbose = bool(os.environ.get("CORAL_VERBOSE"))
         last_state = None
+        last_event = None
         while True:
             job = client.get_job(name=name)
             state = job.status.state
             if verbose and state != last_state:
                 print(f"[coral] Batch job state: {state.name} ({job.name})")
                 last_state = state
+            if verbose and job.status.status_events:
+                event = job.status.status_events[-1]
+                message = event.description or event.event_type.name
+                stamp = event.event_time.isoformat() if event.event_time else ""
+                event_sig = f"{message}-{stamp}"
+                if event_sig != last_event:
+                    print(f"[coral] Batch status event: {stamp} {message}")
+                    last_event = event_sig
             if state in (batch_v1.JobStatus.State.SUCCEEDED, batch_v1.JobStatus.State.FAILED):
                 break
             time.sleep(5)
