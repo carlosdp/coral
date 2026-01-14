@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 from pathlib import Path
 
 from coral_runtime.fetch import fetch_bundle
@@ -29,6 +30,9 @@ def main() -> None:
         existing = os.environ.get("PYTHONPATH", "")
         combined = os.pathsep.join(extra_paths + ([existing] if existing else []))
         os.environ["PYTHONPATH"] = combined
+        for path in reversed(extra_paths):
+            if path not in sys.path:
+                sys.path.insert(0, path)
 
     callspec_json = base64.b64decode(callspec_b64.encode("utf-8")).decode("utf-8")
     call_spec = CallSpec.from_json(callspec_json)
