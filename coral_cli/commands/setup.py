@@ -279,6 +279,7 @@ def main(
             "gcs_bucket": bucket,
             "execution": "batch",
             "service_account": service_account,
+            "machine_type": "e2-medium",
         }
     )
     write_config(data)
