@@ -22,7 +22,13 @@ def main() -> None:
     if bundle_uri:
         dest = Path("/opt/coral/src")
         fetch_bundle(bundle_uri, dest)
-        os.environ["PYTHONPATH"] = f"{dest}:{os.environ.get('PYTHONPATH', '')}"
+        extra_paths = [str(dest)]
+        for child in dest.iterdir():
+            if child.is_dir():
+                extra_paths.append(str(child))
+        existing = os.environ.get("PYTHONPATH", "")
+        combined = os.pathsep.join(extra_paths + ([existing] if existing else []))
+        os.environ["PYTHONPATH"] = combined
 
     callspec_json = base64.b64decode(callspec_b64.encode("utf-8")).decode("utf-8")
     call_spec = CallSpec.from_json(callspec_json)
