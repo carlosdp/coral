@@ -216,6 +216,7 @@ def _bind_roles(project: str, service_account: str) -> None:
         "roles/storage.admin",
         "roles/artifactregistry.admin",
         "roles/batch.admin",
+        "roles/batch.agentReporter",
         "roles/logging.viewer",
         "roles/cloudbuild.builds.editor",
     ]
