@@ -28,6 +28,7 @@ class RunSession:
     detached: bool = False
     env: Dict[str, str] | None = None
     verbose: bool = False
+    no_cache: bool = False
 
     def __post_init__(self):
         self.run_id = uuid.uuid4().hex
@@ -104,7 +105,7 @@ class RunSession:
             get_console().print(
                 f"[info]Bundle hash:[/info] {bundle_result.hash}"
             )
-        if bundle_result.hash in bundle_cache:
+        if not self.no_cache and bundle_result.hash in bundle_cache:
             cached = bundle_cache[bundle_result.hash]
             self._bundle_ref = BundleRef(uri=cached["uri"], hash=bundle_result.hash)
             self._bundle_result = bundle_result
@@ -133,7 +134,7 @@ class RunSession:
 
             get_console().print(f"[info]Image hash:[/info] {image_hash}")
         image_cache = self._load_index(IMAGE_INDEX)
-        if image_hash in image_cache:
+        if not self.no_cache and image_hash in image_cache:
             cached = image_cache[image_hash]
             self._image_ref = ImageRef(
                 uri=cached["uri"],

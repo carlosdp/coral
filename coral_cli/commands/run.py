@@ -53,6 +53,7 @@ def main(
     env: List[str] = typer.Option([], "--env", help="Extra env vars KEY=VALUE"),
     gpu: Optional[str] = typer.Option(None, "--gpu", help="Override GPU spec (e.g. A100:1)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Disable local cache usage"),
 ):
     console = get_console()
     if verbose:
@@ -83,6 +84,7 @@ def main(
         detached=detach,
         env=env_vars,
         verbose=verbose,
+        no_cache=no_cache,
     ) as session:
         if target_name:
             if target_name in app_obj._local_entrypoints:
