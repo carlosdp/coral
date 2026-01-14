@@ -102,6 +102,9 @@ class App:
             )
             handle = FunctionHandle(name=fn.__name__, spec=spec, app=self)
             self._functions[fn.__name__] = handle
+            handle.__name__ = fn.__name__
+            handle.__module__ = fn.__module__
+            handle.__qualname__ = fn.__qualname__
             return handle
 
         return decorator
