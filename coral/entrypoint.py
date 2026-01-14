@@ -27,6 +27,7 @@ class RunSession:
     app: App
     detached: bool = False
     env: Dict[str, str] | None = None
+    verbose: bool = False
 
     def __post_init__(self):
         self.run_id = uuid.uuid4().hex
@@ -87,10 +88,22 @@ class RunSession:
 
         sync_sources, _copy_sources, sync_ignores = self._resolve_local_sources(image)
         roots = self._app_source_roots(self.app) + sync_sources
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(
+                f"[info]Bundling sources:[/info] {', '.join(str(r) for r in roots)}"
+            )
         bundle_cache = self._load_index(BUNDLE_INDEX)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         bundle_path = CACHE_DIR / "bundle.tar.gz"
         bundle_result = create_bundle(roots, bundle_path, __version__, extra_ignores=sync_ignores)
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(
+                f"[info]Bundle hash:[/info] {bundle_result.hash}"
+            )
         if bundle_result.hash in bundle_cache:
             cached = bundle_cache[bundle_result.hash]
             self._bundle_ref = BundleRef(uri=cached["uri"], hash=bundle_result.hash)
@@ -99,6 +112,12 @@ class RunSession:
 
         artifact_store = self.provider.get_artifacts()
         bundle_ref = artifact_store.put_bundle(bundle_result.path, bundle_result.hash)
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(
+                f"[info]Uploaded bundle:[/info] {bundle_ref.uri}"
+            )
         bundle_cache[bundle_result.hash] = {"uri": bundle_ref.uri}
         self._save_index(BUNDLE_INDEX, bundle_cache)
         self._bundle_ref = bundle_ref
@@ -109,6 +128,10 @@ class RunSession:
         if self._image_ref is not None:
             return self._image_ref
         image_hash = build_plan_hash(image)
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(f"[info]Image hash:[/info] {image_hash}")
         image_cache = self._load_index(IMAGE_INDEX)
         if image_hash in image_cache:
             cached = image_cache[image_hash]
@@ -117,11 +140,23 @@ class RunSession:
                 digest=cached["digest"],
                 metadata=cached.get("metadata", {}),
             )
+            if self.verbose:
+                from coral.logging import get_console
+
+                get_console().print(
+                    f"[info]Using cached image:[/info] {self._image_ref.uri}"
+                )
             return self._image_ref
 
         _sync_sources, copy_sources, _sync_ignores = self._resolve_local_sources(image)
         builder = self.provider.get_builder()
         image_ref = builder.resolve_image(image, copy_sources=copy_sources)
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(
+                f"[info]Built image:[/info] {image_ref.uri}"
+            )
         image_cache[image_hash] = {
             "uri": image_ref.uri,
             "digest": image_ref.digest,
@@ -133,6 +168,10 @@ class RunSession:
 
     def prepare(self):
         image = self.app.image
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print("[info]Preparing image and bundle...[/info]")
         self._image(image)
         self._bundle(image)
 
@@ -140,6 +179,12 @@ class RunSession:
         image = spec.image or self.app.image
         image_ref = self._image(image)
         bundle_ref = self._bundle(image)
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print(
+                f"[info]Submitting call:[/info] {spec.module}:{spec.qualname}"
+            )
 
         call_id = uuid.uuid4().hex
         result_uri = self.provider.get_artifacts().result_uri(call_id)
@@ -153,16 +198,16 @@ class RunSession:
             result_ref=result_uri,
             stdout_mode="stream",
             log_labels={
-                "coral.run_id": self.run_id,
-                "coral.app": self.app.name,
-                "coral.call_id": call_id,
+                "coral_run_id": self.run_id,
+                "coral_app": self.app.name,
+                "coral_call_id": call_id,
             },
         )
         env = dict(self.env or {})
         labels = {
-            "coral.run_id": self.run_id,
-            "coral.app": self.app.name,
-            "coral.call_id": call_id,
+            "coral_run_id": self.run_id,
+            "coral_app": self.app.name,
+            "coral_call_id": call_id,
         }
         handle = self.provider.get_executor().submit(
             call_spec,

@@ -1,3 +1,5 @@
+import os
+
 from rich.console import Console
 from rich.theme import Theme
 
@@ -16,3 +18,7 @@ _console = Console(theme=DEFAULT_THEME)
 
 def get_console() -> Console:
     return _console
+
+
+def is_verbose() -> bool:
+    return bool(os.environ.get("CORAL_VERBOSE"))

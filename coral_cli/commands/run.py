@@ -51,6 +51,7 @@ def main(
     ),
     env: List[str] = typer.Option([], "--env", help="Extra env vars KEY=VALUE"),
     gpu: Optional[str] = typer.Option(None, "--gpu", help="Override GPU spec (e.g. A100:1)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     console = get_console()
     profile_data = get_profile(profile)
@@ -73,7 +74,13 @@ def main(
     app_obj = _select_app()
     env_vars = _parse_env(env)
 
-    with RunSession(provider=provider_obj, app=app_obj, detached=detach, env=env_vars) as session:
+    with RunSession(
+        provider=provider_obj,
+        app=app_obj,
+        detached=detach,
+        env=env_vars,
+        verbose=verbose,
+    ) as session:
         if target_name:
             if target_name in app_obj._local_entrypoints:
                 console.print(f"[info]Running local entrypoint {target_name}[/info]")

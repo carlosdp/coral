@@ -22,7 +22,7 @@ class GCPLogStreamer:
         while True:
             filter_expr = (
                 "resource.type=\"batch_job\" "
-                f"labels.coral.run_id=\"{handle.run_id}\""
+                f"labels.coral_run_id=\"{handle.run_id}\""
             )
             entries = list(client.list_entries(filter_=filter_expr, order_by="timestamp asc"))
             for entry in entries:

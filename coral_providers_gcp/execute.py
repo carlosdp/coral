@@ -120,11 +120,14 @@ class BatchExecutor:
             labels=labels,
             logs_policy=batch_v1.LogsPolicy(destination=batch_v1.LogsPolicy.Destination.CLOUD_LOGGING),
         )
-        job_id = self._job_id(call_spec.log_labels.get("coral.run_id", "run"), call_spec.call_id)
+        job_id = self._job_id(
+            call_spec.log_labels.get("coral_run_id", "run"),
+            call_spec.call_id,
+        )
         client = self._client()
         client.create_job(parent=self._job_parent(), job=job, job_id=job_id)
         return RunHandle(
-            run_id=call_spec.log_labels.get("coral.run_id", ""),
+            run_id=call_spec.log_labels.get("coral_run_id", ""),
             call_id=call_spec.call_id,
             provider_ref=job_id,
         )
@@ -150,7 +153,7 @@ class BatchExecutor:
             return
         parent = self._job_parent()
         for job in client.list_jobs(parent=parent):
-            if job.labels.get("coral.run_id") == handle.run_id:
+            if job.labels.get("coral_run_id") == handle.run_id:
                 client.delete_job(name=job.name)
 
 
