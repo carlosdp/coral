@@ -218,6 +218,8 @@ def _bind_roles(project: str, service_account: str) -> None:
         "roles/batch.admin",
         "roles/batch.agentReporter",
         "roles/logging.viewer",
+        "roles/logging.logWriter",
+        "roles/monitoring.metricWriter",
         "roles/cloudbuild.builds.editor",
     ]
     for role in roles:
