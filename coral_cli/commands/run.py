@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -54,6 +55,8 @@ def main(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     console = get_console()
+    if verbose:
+        os.environ["CORAL_VERBOSE"] = "1"
     profile_data = get_profile(profile)
     provider_name = provider or profile_data.provider
     provider_obj = registry.load(provider_name)
