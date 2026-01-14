@@ -5,7 +5,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 from coral import __version__
 from coral.app import App
@@ -29,6 +29,7 @@ class RunSession:
     env: Dict[str, str] | None = None
     verbose: bool = False
     no_cache: bool = False
+    status_cb: Callable[[str], None] | None = None
 
     def __post_init__(self):
         self.run_id = uuid.uuid4().hex
@@ -38,10 +39,16 @@ class RunSession:
 
     def __enter__(self):
         self.app._set_session(self)
+        if hasattr(self.provider, "set_status_callback"):
+            self.provider.set_status_callback(self._status)
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self.app._clear_session()
+
+    def _status(self, message: str) -> None:
+        if self.status_cb:
+            self.status_cb(message)
 
     def _load_index(self, path: Path) -> Dict[str, dict]:
         if not path.exists():
@@ -89,6 +96,7 @@ class RunSession:
 
         sync_sources, _copy_sources, sync_ignores = self._resolve_local_sources(image)
         roots = self._app_source_roots(self.app) + sync_sources
+        self._status("Uploading files")
         if self.verbose:
             from coral.logging import get_console
 
@@ -107,12 +115,14 @@ class RunSession:
             )
         if not self.no_cache and bundle_result.hash in bundle_cache:
             cached = bundle_cache[bundle_result.hash]
+            self._status("Using cached bundle")
             self._bundle_ref = BundleRef(uri=cached["uri"], hash=bundle_result.hash)
             self._bundle_result = bundle_result
             return self._bundle_ref
 
         artifact_store = self.provider.get_artifacts()
         bundle_ref = artifact_store.put_bundle(bundle_result.path, bundle_result.hash)
+        self._status("Uploaded files")
         if self.verbose:
             from coral.logging import get_console
 
@@ -129,6 +139,7 @@ class RunSession:
         if self._image_ref is not None:
             return self._image_ref
         image_hash = build_plan_hash(image)
+        self._status("Building image")
         if self.verbose:
             from coral.logging import get_console
 
@@ -141,6 +152,7 @@ class RunSession:
                 digest=cached["digest"],
                 metadata=cached.get("metadata", {}),
             )
+            self._status("Using cached image")
             if self.verbose:
                 from coral.logging import get_console
 
@@ -152,6 +164,7 @@ class RunSession:
         _sync_sources, copy_sources, _sync_ignores = self._resolve_local_sources(image)
         builder = self.provider.get_builder()
         image_ref = builder.resolve_image(image, copy_sources=copy_sources)
+        self._status("Built image")
         if self.verbose:
             from coral.logging import get_console
 
@@ -169,6 +182,7 @@ class RunSession:
 
     def prepare(self):
         image = self.app.image
+        self._status("Preparing image and bundle")
         if self.verbose:
             from coral.logging import get_console
 
@@ -180,6 +194,7 @@ class RunSession:
         image = spec.image or self.app.image
         image_ref = self._image(image)
         bundle_ref = self._bundle(image)
+        self._status("Spawning container")
         if self.verbose:
             from coral.logging import get_console
 
@@ -223,7 +238,9 @@ class RunSession:
         return handle
 
     def wait(self, handle: RunHandle) -> RunResult:
+        self._status("Container running")
         result = self.provider.get_executor().wait(handle)
         if not self.detached:
             self.provider.get_cleanup().cleanup(handle, detached=self.detached)
+        self._status("Completed")
         return result

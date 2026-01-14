@@ -78,56 +78,60 @@ def main(
     app_obj = _select_app()
     env_vars = _parse_env(env)
 
-    with RunSession(
-        provider=provider_obj,
-        app=app_obj,
-        detached=detach,
-        env=env_vars,
-        verbose=verbose,
-        no_cache=no_cache,
-    ) as session:
-        if target_name:
-            if target_name in app_obj._local_entrypoints:
-                console.print(f"[info]Running local entrypoint {target_name}[/info]")
-                app_obj.get_entrypoint(target_name)(*args)
-                return
-            if target_name in app_obj._functions:
-                handle = app_obj.get_function(target_name)
-                if gpu:
-                    handle.spec = FunctionSpec(
-                        name=handle.spec.name,
-                        module=handle.spec.module,
-                        qualname=handle.spec.qualname,
-                        source_file=handle.spec.source_file,
-                        resources=ResourceSpec(
-                            cpu=handle.spec.resources.cpu,
-                            memory=handle.spec.resources.memory,
-                            gpu=gpu,
-                            timeout=handle.spec.resources.timeout,
-                            retries=handle.spec.resources.retries,
-                        ),
-                        image=handle.spec.image,
-                    )
-                if detach:
-                    run_handle = handle.spawn(*args)
-                    console.print(f"[success]Run submitted:[/success] {run_handle.run_id}")
+    with console.status("Starting...", spinner="dots") as status:
+        with RunSession(
+            provider=provider_obj,
+            app=app_obj,
+            detached=detach,
+            env=env_vars,
+            verbose=verbose,
+            no_cache=no_cache,
+            status_cb=status.update,
+        ) as session:
+            if target_name:
+                if target_name in app_obj._local_entrypoints:
+                    console.print(f"[info]Running local entrypoint {target_name}[/info]")
+                    app_obj.get_entrypoint(target_name)(*args)
                     return
-                if write_result:
-                    run_handle = session.submit(handle.spec, tuple(args), {})
-                    result = session.wait(run_handle)
+                if target_name in app_obj._functions:
+                    handle = app_obj.get_function(target_name)
+                    if gpu:
+                        handle.spec = FunctionSpec(
+                            name=handle.spec.name,
+                            module=handle.spec.module,
+                            qualname=handle.spec.qualname,
+                            source_file=handle.spec.source_file,
+                            resources=ResourceSpec(
+                                cpu=handle.spec.resources.cpu,
+                                memory=handle.spec.resources.memory,
+                                gpu=gpu,
+                                timeout=handle.spec.resources.timeout,
+                                retries=handle.spec.resources.retries,
+                            ),
+                            image=handle.spec.image,
+                        )
+                    if detach:
+                        run_handle = handle.spawn(*args)
+                        console.print(f"[success]Run submitted:[/success] {run_handle.run_id}")
+                        return
                     if write_result:
-                        write_result.write_bytes(result.output)
-                    console.print(f"[success]Run finished:[/success] {result.success}")
+                        run_handle = session.submit(handle.spec, tuple(args), {})
+                        result = session.wait(run_handle)
+                        if write_result:
+                            write_result.write_bytes(result.output)
+                        console.print(f"[success]Run finished:[/success] {result.success}")
+                        return
+                    handle.remote(*args)
+                    console.print("[success]Run finished:[/success] success")
                     return
-                handle.remote(*args)
-                console.print("[success]Run finished:[/success] success")
+                raise CoralError(f"Target '{target_name}' not found in app")
+
+            if len(app_obj._local_entrypoints) == 1:
+                entrypoint = list(app_obj._local_entrypoints.values())[0]
+                console.print(
+                    f"[info]Running default local entrypoint {entrypoint.__name__}[/info]"
+                )
+                entrypoint(*args)
                 return
-            raise CoralError(f"Target '{target_name}' not found in app")
 
-        if len(app_obj._local_entrypoints) == 1:
-            entrypoint = list(app_obj._local_entrypoints.values())[0]
-            console.print(f"[info]Running default local entrypoint {entrypoint.__name__}[/info]")
-            entrypoint(*args)
-            return
-
-        raise CoralError("Multiple entrypoints found; please specify ::entrypoint")
+            raise CoralError("Multiple entrypoints found; please specify ::entrypoint")

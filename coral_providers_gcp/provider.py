@@ -29,6 +29,10 @@ class GCPProvider(Provider):
 
     def __init__(self):
         self.config: GCPConfig | None = None
+        self._status_cb = None
+
+    def set_status_callback(self, cb):
+        self._status_cb = cb
 
     def configure(self, profile: Profile) -> None:
         data = profile.data
@@ -79,6 +83,7 @@ class GCPProvider(Provider):
             artifact_store=artifacts,
             machine_type=cfg.machine_type,
             service_account=cfg.service_account,
+            status_cb=self._status_cb,
         )
 
     def get_log_streamer(self):

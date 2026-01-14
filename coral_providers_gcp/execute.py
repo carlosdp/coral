@@ -4,7 +4,7 @@ import base64
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict
+from typing import Callable, Dict
 
 from google.cloud import batch_v1
 from google.protobuf import duration_pb2
@@ -35,6 +35,7 @@ class BatchExecutor:
     artifact_store: object
     machine_type: str | None = None
     service_account: str | None = None
+    status_cb: Callable[[str], None] | None = None
 
     def _client(self) -> batch_v1.BatchServiceClient:
         return batch_v1.BatchServiceClient()
@@ -142,8 +143,11 @@ class BatchExecutor:
         while True:
             job = client.get_job(name=name)
             state = job.status.state
-            if verbose and state != last_state:
-                print(f"[coral] Batch job state: {state.name} ({job.name})")
+            if state != last_state:
+                if self.status_cb:
+                    self.status_cb(f"Batch {state.name.lower()}")
+                if verbose:
+                    print(f"[coral] Batch job state: {state.name} ({job.name})")
                 last_state = state
             if verbose and job.status.status_events:
                 event = job.status.status_events[-1]
