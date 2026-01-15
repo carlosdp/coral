@@ -16,6 +16,16 @@ coral --help
 coral run examples/simple.py::main
 ```
 
+## Prime Intellect provider (optional)
+
+```bash
+coral setup --provider prime
+coral run --provider prime examples/simple.py::main
+```
+
+Prime Intellect config lives under `[profile.<name>.prime]` in `~/.coral/config.toml` and uses
+GCP for image builds/artifacts while running containers on Prime.
+
 ```python
 import coral
 

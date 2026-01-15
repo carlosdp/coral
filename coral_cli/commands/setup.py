@@ -93,8 +93,8 @@ def _select_project(console) -> str:
     return projects[choice_idx - 1]["projectId"]
 
 
-def _select_region() -> str:
-    return typer.prompt("GCP region", default="us-central1")
+def _select_region(prompt_label: str = "GCP region") -> str:
+    return typer.prompt(prompt_label, default="us-central1")
 
 
 def _enable_services(project: str) -> None:
@@ -241,9 +241,13 @@ def _bind_roles(project: str, service_account: str) -> None:
 @app.callback(invoke_without_command=True)
 def main(
     profile: Optional[str] = typer.Option(None, "--profile", help="Config profile"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="Provider (gcp|prime)"),
 ):
     console = get_console()
     _require_gcloud()
+    chosen_provider = provider or typer.prompt("Provider", default="gcp")
+    if chosen_provider not in {"gcp", "prime"}:
+        raise ConfigError("Provider must be 'gcp' or 'prime'")
 
     if not _credentials_valid():
         console.print("[info]Launching gcloud Application Default Credentials login...[/info]")
@@ -272,18 +276,48 @@ def main(
     data = load_config()
     profiles = data.setdefault("profile", {})
     profile_data = profiles.setdefault(profile_name, {})
-    profile_data["provider"] = "gcp"
-    gcp_data = profile_data.setdefault("gcp", {})
-    gcp_data.update(
-        {
-            "project": project,
-            "region": region,
-            "artifact_repo": repo,
-            "gcs_bucket": bucket,
-            "execution": "batch",
-            "service_account": service_account,
-            "machine_type": "e2-medium",
-        }
-    )
+    profile_data["provider"] = chosen_provider
+
+    if chosen_provider == "gcp":
+        gcp_data = profile_data.setdefault("gcp", {})
+        gcp_data.update(
+            {
+                "project": project,
+                "region": region,
+                "artifact_repo": repo,
+                "gcs_bucket": bucket,
+                "execution": "batch",
+                "service_account": service_account,
+                "machine_type": "e2-medium",
+            }
+        )
+    else:
+        api_key = typer.prompt("Prime Intellect API key", hide_input=True)
+        team_id = typer.prompt("Prime Intellect team ID (optional)", default="")
+        registry_credentials_id = typer.prompt(
+            "Prime registry credentials ID (optional)",
+            default="",
+        )
+        gpu_type = typer.prompt("GPU type", default="CPU_NODE")
+        gpu_count = int(typer.prompt("GPU count", default="1"))
+        regions_str = typer.prompt("Prime regions (comma-separated)", default="united_states")
+        regions = [item.strip() for item in regions_str.split(",") if item.strip()]
+
+        prime_data = profile_data.setdefault("prime", {})
+        prime_data.update(
+            {
+                "api_key": api_key,
+                "team_id": team_id or None,
+                "gcp_project": project,
+                "gcp_region": region,
+                "artifact_repo": repo,
+                "gcs_bucket": bucket,
+                "gpu_type": gpu_type,
+                "gpu_count": gpu_count,
+                "regions": regions,
+                "registry_credentials_id": registry_credentials_id or None,
+            }
+        )
+
     write_config(data)
     console.print("[success]Wrote config to ~/.coral/config.toml[/success]")

@@ -68,6 +68,9 @@ def write_config(data: Dict[str, Any]) -> None:
                     value_str = "true" if value else "false"
                 elif isinstance(value, (int, float)):
                     value_str = str(value)
+                elif isinstance(value, list):
+                    items = ", ".join(f"\"{item}\"" for item in value)
+                    value_str = f"[{items}]"
                 else:
                     value_str = f"\"{value}\""
                 lines.append(f"{key} = {value_str}")
