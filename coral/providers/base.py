@@ -48,7 +48,7 @@ class ArtifactStore(Protocol):
     def result_uri(self, call_id: str) -> str:
         ...
 
-    def signed_url(self, uri: str, ttl_seconds: int) -> str | None:
+    def signed_url(self, uri: str, ttl_seconds: int, method: str = "GET") -> str | None:
         ...
 
 

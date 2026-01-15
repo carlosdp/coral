@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Tuple
 
+import requests
 from google.cloud import storage
 
 
@@ -21,6 +22,10 @@ def write_bytes(uri: str, payload: bytes) -> None:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
         blob.upload_from_string(payload)
+        return
+    if uri.startswith("http://") or uri.startswith("https://"):
+        resp = requests.put(uri, data=payload, timeout=60)
+        resp.raise_for_status()
         return
     path = Path(uri)
     path.parent.mkdir(parents=True, exist_ok=True)

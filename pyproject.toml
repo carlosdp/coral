@@ -41,6 +41,7 @@ coral = "coral_cli.main:app"
 
 [project.entry-points."coral.providers"]
 gcp = "coral_providers_gcp.provider:GCPProvider"
+prime = "coral_providers_primeintellect.provider:PrimeIntellectProvider"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]
@@ -55,6 +56,7 @@ packages = [
   "coral_cli.commands",
   "coral_runtime",
   "coral_providers_gcp",
+  "coral_providers_primeintellect",
 ]
 
 [tool.uv]

@@ -41,7 +41,7 @@ class GCSArtifactStore:
         blob = bucket.blob(blob_name)
         return blob.download_as_bytes()
 
-    def signed_url(self, uri: str, ttl_seconds: int) -> Optional[str]:
+    def signed_url(self, uri: str, ttl_seconds: int, method: str = "GET") -> Optional[str]:
         if not uri.startswith("gs://"):
             return None
         _, path = uri.split("gs://", 1)
@@ -49,4 +49,4 @@ class GCSArtifactStore:
         client = self._client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-        return blob.generate_signed_url(expiration=ttl_seconds)
+        return blob.generate_signed_url(expiration=ttl_seconds, method=method)
