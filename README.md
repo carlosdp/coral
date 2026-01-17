@@ -26,6 +26,9 @@ coral run --provider prime examples/simple.py::main
 Prime Intellect config lives under `[profile.<name>.prime]` in `~/.coral/config.toml` and uses
 GCP for image builds/artifacts while running containers on Prime.
 
+If gcloud prompts for reauthentication during setup, choose "no" when asked to provision
+resources and enter existing GCP resource names instead.
+
 ```python
 import coral
 

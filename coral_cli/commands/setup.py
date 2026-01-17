@@ -263,14 +263,24 @@ def main(
     region = _select_region()
     console.print(f"[info]Using project {project} in region {region}[/info]")
 
-    console.print("[info]Enabling required services...[/info]")
-    _enable_services(project)
+    provision = typer.confirm(
+        "Provision GCP resources with gcloud?",
+        default=True,
+    )
+    if provision:
+        console.print("[info]Enabling required services...[/info]")
+        _enable_services(project)
 
-    console.print("[info]Creating resources...[/info]")
-    bucket = _create_bucket(project, region)
-    repo = _create_artifact_repo(project, region)
-    service_account = _create_service_account(project)
-    _bind_roles(project, service_account)
+        console.print("[info]Creating resources...[/info]")
+        bucket = _create_bucket(project, region)
+        repo = _create_artifact_repo(project, region)
+        service_account = _create_service_account(project)
+        _bind_roles(project, service_account)
+    else:
+        console.print("[info]Skipping gcloud provisioning.[/info]")
+        bucket = typer.prompt("GCS bucket name")
+        repo = typer.prompt("Artifact Registry repo name", default="coral")
+        service_account = typer.prompt("Service account email")
 
     profile_name = profile or "default"
     data = load_config()
