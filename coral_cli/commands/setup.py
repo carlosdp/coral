@@ -118,6 +118,13 @@ def _random_suffix() -> str:
 def _create_bucket(project: str, region: str) -> str:
     base_name = f"coral-artifacts-{project}"
     bucket_name = base_name
+    exists = subprocess.run(
+        ["gcloud", "storage", "buckets", "describe", f"gs://{bucket_name}"],
+        capture_output=True,
+        text=True,
+    )
+    if exists.returncode == 0:
+        return bucket_name
     for _ in range(3):
         try:
             subprocess.run(
