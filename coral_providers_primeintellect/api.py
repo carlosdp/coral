@@ -40,7 +40,7 @@ class PrimeClient:
             timeout=30,
         )
         resp.raise_for_status()
-        return resp.json().get("data", [])
+        return resp.json().get("items", [])
 
     def check_docker_image(
         self,

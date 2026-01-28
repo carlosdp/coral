@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import google.auth
+from google.auth import impersonated_credentials
+from google.auth.credentials import Credentials
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.transport.requests import Request
+
 from google.cloud import storage
 
 from coral.providers.base import BundleRef
@@ -12,9 +18,32 @@ from coral.providers.base import BundleRef
 class GCSArtifactStore:
     project: str
     bucket: str
+    signer_service_account: str | None = None
 
     def _client(self) -> storage.Client:
         return storage.Client(project=self.project)
+
+    def _signing_credentials(self) -> Optional[Credentials]:
+        try:
+            source_credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        except DefaultCredentialsError:
+            return None
+        if hasattr(source_credentials, "sign_bytes") and hasattr(
+            source_credentials, "signer_email"
+        ):
+            return source_credentials
+        if not self.signer_service_account:
+            return None
+        if not source_credentials.valid:
+            source_credentials.refresh(Request())
+        return impersonated_credentials.Credentials(
+            source_credentials=source_credentials,
+            target_principal=self.signer_service_account,
+            target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            lifetime=3600,
+        )
 
     def bundle_uri(self, bundle_hash: str) -> str:
         return f"gs://{self.bucket}/coral/bundles/{bundle_hash}.tar.gz"
@@ -49,4 +78,15 @@ class GCSArtifactStore:
         client = self._client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-        return blob.generate_signed_url(expiration=ttl_seconds, method=method)
+        signing_credentials = self._signing_credentials()
+        try:
+            return blob.generate_signed_url(
+                expiration=ttl_seconds,
+                method=method,
+                credentials=signing_credentials,
+            )
+        except AttributeError as exc:
+            message = str(exc)
+            if "need a private key" in message:
+                return None
+            raise

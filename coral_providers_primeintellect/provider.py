@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -22,6 +23,8 @@ class PrimeConfig:
     gcp_region: str
     artifact_repo: str
     gcs_bucket: str
+    service_account: Optional[str]
+    credentials_path: Optional[str]
     gpu_type: str
     gpu_count: int
     regions: list[str]
@@ -42,6 +45,11 @@ class PrimeIntellectProvider(Provider):
 
     def configure(self, profile: Profile) -> None:
         data = profile.data
+        credentials_path = data.get("credentials_path")
+        if credentials_path:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser(
+                credentials_path
+            )
         missing = [
             key
             for key in [
@@ -62,10 +70,12 @@ class PrimeIntellectProvider(Provider):
             gcp_region=data["gcp_region"],
             artifact_repo=data["artifact_repo"],
             gcs_bucket=data["gcs_bucket"],
+            service_account=data.get("service_account"),
+            credentials_path=credentials_path,
             gpu_type=data.get("gpu_type", "CPU_NODE"),
             gpu_count=int(data.get("gpu_count", 1)),
             regions=data.get("regions", ["united_states"]),
-            provider_type=data.get("provider_type", "primeintellect"),
+            provider_type=data.get("provider_type", None),
             registry_credentials_id=data.get("registry_credentials_id"),
         )
 
@@ -86,7 +96,11 @@ class PrimeIntellectProvider(Provider):
     def get_artifacts(self):
         cfg = self._ensure_config()
         if self._artifacts is None:
-            gcs = GCSArtifactStore(project=cfg.gcp_project, bucket=cfg.gcs_bucket)
+            gcs = GCSArtifactStore(
+                project=cfg.gcp_project,
+                bucket=cfg.gcs_bucket,
+                signer_service_account=cfg.service_account,
+            )
             self._artifacts = PrimeArtifactStore(gcs=gcs)
         return self._artifacts
 

@@ -218,6 +218,34 @@ def _create_service_account(project: str) -> str:
     return email
 
 
+def _active_gcloud_account() -> Optional[str]:
+    result = subprocess.run(
+        ["gcloud", "config", "get-value", "account"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    account = result.stdout.strip()
+    return account or None
+
+
+def _grant_service_account_impersonation(service_account: str, member: str) -> None:
+    subprocess.run(
+        [
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "add-iam-policy-binding",
+            service_account,
+            "--member",
+            member,
+            "--role",
+            "roles/iam.serviceAccountTokenCreator",
+        ],
+        check=True,
+    )
+
+
 def _bind_roles(project: str, service_account: str) -> None:
     roles = [
         "roles/storage.admin",
@@ -283,6 +311,14 @@ def main(
         repo = _create_artifact_repo(project, region)
         service_account = _create_service_account(project)
         _bind_roles(project, service_account)
+        if chosen_provider == "prime":
+            account = _active_gcloud_account()
+            if account:
+                member_prefix = "serviceAccount" if account.endswith("gserviceaccount.com") else "user"
+                _grant_service_account_impersonation(
+                    service_account,
+                    f"{member_prefix}:{account}",
+                )
     else:
         console.print("[info]Skipping gcloud provisioning.[/info]")
         bucket = typer.prompt("GCS bucket name")
@@ -329,6 +365,7 @@ def main(
                 "gcp_region": region,
                 "artifact_repo": repo,
                 "gcs_bucket": bucket,
+                "service_account": service_account,
                 "gpu_type": gpu_type,
                 "gpu_count": gpu_count,
                 "regions": regions,
