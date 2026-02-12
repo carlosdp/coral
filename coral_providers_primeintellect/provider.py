@@ -30,6 +30,7 @@ class PrimeConfig:
     regions: list[str]
     provider_type: Optional[str]
     registry_credentials_id: Optional[str]
+    custom_template_id: Optional[str]
 
 
 class PrimeIntellectProvider(Provider):
@@ -77,6 +78,7 @@ class PrimeIntellectProvider(Provider):
             regions=data.get("regions", ["united_states"]),
             provider_type=data.get("provider_type", None),
             registry_credentials_id=data.get("registry_credentials_id"),
+            custom_template_id=data.get("custom_template_id"),
         )
 
     def _ensure_config(self) -> PrimeConfig:
@@ -117,6 +119,7 @@ class PrimeIntellectProvider(Provider):
             regions=cfg.regions,
             provider_type=cfg.provider_type,
             registry_credentials_id=cfg.registry_credentials_id,
+            custom_template_id=cfg.custom_template_id,
             status_cb=self._status_cb,
         )
 

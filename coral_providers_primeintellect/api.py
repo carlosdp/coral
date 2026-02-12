@@ -30,9 +30,7 @@ class PrimeClient:
             "gpu_count": gpu_count,
         }
         if regions:
-            params["regions"] = ",".join(regions)
-        if provider:
-            params["provider"] = provider
+            params["regions"] = regions
         resp = requests.get(
             f"{self.base_url}/api/v1/availability/gpus",
             headers=self._headers(),
@@ -40,7 +38,14 @@ class PrimeClient:
             timeout=30,
         )
         resp.raise_for_status()
-        return resp.json().get("items", [])
+        items = resp.json().get("items", [])
+        if provider:
+            items = [
+                item
+                for item in items
+                if item.get("provider") == provider or item.get("providerType") == provider
+            ]
+        return items
 
     def check_docker_image(
         self,
@@ -79,7 +84,7 @@ class PrimeClient:
         return resp.json()
 
     def get_pods_status(self, pod_ids: List[str]) -> Dict[str, Any]:
-        params = {"pod_ids": ",".join(pod_ids)}
+        params = {"pod_ids": pod_ids}
         resp = requests.get(
             f"{self.base_url}/api/v1/pods/status",
             headers=self._headers(),
@@ -88,6 +93,66 @@ class PrimeClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def list_images(self) -> List[Dict[str, Any]]:
+        resp = requests.get(
+            f"{self.base_url}/api/v1/images",
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("data") or data.get("items") or []
+
+    def create_image_build(
+        self,
+        image_name: str,
+        image_tag: str,
+        dockerfile_path: str = "Dockerfile",
+        team_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "image_name": image_name,
+            "image_tag": image_tag,
+            "dockerfile_path": dockerfile_path,
+        }
+        if team_id:
+            payload["teamId"] = team_id
+        resp = requests.post(
+            f"{self.base_url}/api/v1/images/build",
+            headers=self._headers(),
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_image_build(self, build_id: str) -> Dict[str, Any]:
+        resp = requests.get(
+            f"{self.base_url}/api/v1/images/build/{build_id}",
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def start_image_build(self, build_id: str) -> Dict[str, Any]:
+        resp = requests.post(
+            f"{self.base_url}/api/v1/images/build/{build_id}/start",
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def upload_build_context(self, upload_url: str, archive_path: str) -> None:
+        with open(archive_path, "rb") as archive:
+            resp = requests.put(
+                upload_url,
+                data=archive,
+                timeout=300,
+            )
+        resp.raise_for_status()
 
     def get_pod_logs(self, pod_id: str, tail: int = 200) -> str:
         resp = requests.get(
