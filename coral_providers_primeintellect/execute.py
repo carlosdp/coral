@@ -201,6 +201,59 @@ SSH_HOST_RUNNER_SCRIPT = textwrap.dedent(
         result = target(*args, **kwargs)
         return cloudpickle.dumps(result)
 
+    def _schedule_self_termination():
+        if os.environ.get("CORAL_SELF_TERMINATE", "").strip() != "1":
+            return
+        pod_id = os.environ.get("CORAL_PRIME_POD_ID", "").strip()
+        api_key = os.environ.get("CORAL_PRIME_API_KEY", "").strip()
+        if not pod_id or not api_key:
+            return
+        payload = json.dumps(
+            {
+                "pod_id": pod_id,
+                "api_key": api_key,
+                "team_id": os.environ.get("CORAL_PRIME_TEAM_ID", "").strip(),
+                "base_url": os.environ.get(
+                    "CORAL_PRIME_BASE_URL",
+                    "https://api.primeintellect.ai",
+                ).strip(),
+            },
+            sort_keys=True,
+        )
+        delete_script = (
+            "import json,os,time,urllib.error,urllib.request\\n"
+            "cfg=json.loads(os.environ.get('CORAL_SELF_TERMINATE_PAYLOAD','{}'))\\n"
+            "time.sleep(2)\\n"
+            "pod_id=cfg.get('pod_id','')\\n"
+            "api_key=cfg.get('api_key','')\\n"
+            "if not pod_id or not api_key:\\n"
+            "    raise SystemExit(0)\\n"
+            "base_url=str(cfg.get('base_url','https://api.primeintellect.ai')).rstrip('/')\\n"
+            "url=f\\\"{base_url}/api/v1/pods/{pod_id}\\\"\\n"
+            "req=urllib.request.Request(url,method='DELETE')\\n"
+            "req.add_header('Authorization',f\\\"Bearer {api_key}\\\")\\n"
+            "team_id=str(cfg.get('team_id','')).strip()\\n"
+            "if team_id:\\n"
+            "    req.add_header('X-Prime-Team-ID',team_id)\\n"
+            "try:\\n"
+            "    urllib.request.urlopen(req,timeout=15).read()\\n"
+            "except urllib.error.HTTPError as exc:\\n"
+            "    if exc.code != 404:\\n"
+            "        pass\\n"
+            "except Exception:\\n"
+            "    pass\\n"
+        )
+        env = dict(os.environ)
+        env["CORAL_SELF_TERMINATE_PAYLOAD"] = payload
+        subprocess.Popen(
+            [sys.executable, "-c", delete_script],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
     def main():
         _setup()
         _load_bundle()
@@ -214,6 +267,7 @@ SSH_HOST_RUNNER_SCRIPT = textwrap.dedent(
             code = 1
         encoded = base64.b64encode(payload).decode("utf-8")
         print(marker + encoded, flush=True)
+        _schedule_self_termination()
         raise SystemExit(code)
 
     if __name__ == "__main__":
@@ -663,6 +717,7 @@ class PrimeExecutor:
         self,
         ssh_base: list[str],
         call_id: str,
+        pod_id: str,
     ) -> tuple[bool, bytes]:
         callspec_b64 = ""
         bundle_path = ""
@@ -680,11 +735,17 @@ class PrimeExecutor:
             raise RuntimeError(f"Missing host execution payload for call {call_id}")
 
         self._upload_bundle_over_ssh(ssh_base, bundle_path)
+        team_id = self.client.team_id or ""
         remote_script = (
             "set -euo pipefail\n"
             f"export CORAL_CALLSPEC_B64={shlex.quote(callspec_b64)}\n"
             f"export CORAL_RUNTIME_SETUP_B64={shlex.quote(setup_b64)}\n"
             f"export CORAL_USER_ENV_B64={shlex.quote(user_env_b64)}\n"
+            "export CORAL_SELF_TERMINATE=1\n"
+            f"export CORAL_PRIME_POD_ID={shlex.quote(pod_id)}\n"
+            f"export CORAL_PRIME_API_KEY={shlex.quote(self.client.api_key)}\n"
+            f"export CORAL_PRIME_TEAM_ID={shlex.quote(team_id)}\n"
+            f"export CORAL_PRIME_BASE_URL={shlex.quote(self.client.base_url)}\n"
             "cat >/tmp/coral_host_runner.py <<'PY'\n"
             f"{SSH_HOST_RUNNER_SCRIPT}\n"
             "PY\n"
@@ -746,7 +807,11 @@ class PrimeExecutor:
         ssh_connection = self._get_pod_ssh_connection(handle.provider_ref, active)
         ssh_base = self._ssh_base_command(ssh_connection)
         self._wait_for_ssh_ready(ssh_base)
-        return self._run_host_runner_over_ssh(ssh_base, handle.call_id)
+        return self._run_host_runner_over_ssh(
+            ssh_base,
+            handle.call_id,
+            handle.provider_ref,
+        )
 
     def _result_ref(self, call_id: str) -> str | None:
         if self._result_refs:
@@ -901,4 +966,4 @@ class PrimeExecutor:
         return RunResult(call_id=handle.call_id, success=success, output=output)
 
     def cancel(self, handle: RunHandle) -> None:
-        self.client.delete_pod(handle.provider_ref)
+        self.client.delete_pod(handle.provider_ref, ignore_missing=True)

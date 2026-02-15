@@ -186,12 +186,14 @@ class PrimeClient:
             pass
         return resp.text
 
-    def delete_pod(self, pod_id: str) -> None:
+    def delete_pod(self, pod_id: str, ignore_missing: bool = False) -> None:
         resp = requests.delete(
             f"{self.base_url}/api/v1/pods/{pod_id}",
             headers=self._headers(),
             timeout=30,
         )
+        if ignore_missing and resp.status_code == 404:
+            return
         self._raise_for_status(resp)
 
     def list_ssh_keys(self, offset: int = 0, limit: int = 200) -> List[Dict[str, Any]]:
