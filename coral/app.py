@@ -81,6 +81,7 @@ class App:
         timeout: int = 3600,
         retries: int = 0,
         image: Optional[ImageSpec] = None,
+        build_image: bool = True,
     ):
         def decorator(fn: Callable):
             module = fn.__module__
@@ -100,6 +101,7 @@ class App:
                 source_file=source_file,
                 resources=resources,
                 image=image,
+                build_image=build_image,
             )
             handle = FunctionHandle(name=fn.__name__, spec=spec, app=self)
             handle._fn = fn

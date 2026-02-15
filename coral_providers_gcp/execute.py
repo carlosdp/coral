@@ -10,6 +10,11 @@ from google.cloud import batch_v1
 from google.protobuf import duration_pb2
 
 from coral.providers.base import RunHandle, RunResult
+from coral.runtime_setup import (
+    CORAL_IMAGE_BUILD_DISABLED_ENV,
+    CORAL_IMAGE_BUILD_DISABLED_METADATA,
+    RUNTIME_BOOTSTRAP_SCRIPT,
+)
 from coral.spec import CallSpec, ResourceSpec
 
 GPU_TYPE_MAP = {
@@ -35,6 +40,7 @@ class BatchExecutor:
     artifact_store: object
     machine_type: str | None = None
     service_account: str | None = None
+    default_runtime_image: str = "python:3.11-slim"
     status_cb: Callable[[str], None] | None = None
 
     def _client(self) -> batch_v1.BatchServiceClient:
@@ -81,9 +87,23 @@ class BatchExecutor:
         }
         env_vars.update(env)
 
-        runnable = batch_v1.Runnable(
-            container=batch_v1.Runnable.Container(image_uri=image.uri),
+        image_build_disabled = (
+            env_vars.get(CORAL_IMAGE_BUILD_DISABLED_ENV) == "1"
+            or image.metadata.get(CORAL_IMAGE_BUILD_DISABLED_METADATA) == "1"
         )
+        if image_build_disabled:
+            image_uri = image.uri or self.default_runtime_image
+            runnable = batch_v1.Runnable(
+                container=batch_v1.Runnable.Container(
+                    image_uri=image_uri,
+                    entrypoint="python",
+                    commands=["-c", RUNTIME_BOOTSTRAP_SCRIPT],
+                ),
+            )
+        else:
+            runnable = batch_v1.Runnable(
+                container=batch_v1.Runnable.Container(image_uri=image.uri),
+            )
         task_spec = batch_v1.TaskSpec(
             runnables=[runnable],
             compute_resource=batch_v1.ComputeResource(

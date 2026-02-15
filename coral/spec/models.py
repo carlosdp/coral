@@ -41,6 +41,7 @@ class FunctionSpec:
     source_file: str
     resources: ResourceSpec
     image: Optional[ImageSpec] = None
+    build_image: bool = True
 
 
 @dataclass(frozen=True)

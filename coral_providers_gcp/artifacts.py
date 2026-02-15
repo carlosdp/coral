@@ -8,7 +8,6 @@ from google.auth import impersonated_credentials
 from google.auth.credentials import Credentials
 from google.auth.exceptions import DefaultCredentialsError
 from google.auth.transport.requests import Request
-
 from google.cloud import storage
 
 from coral.providers.base import BundleRef

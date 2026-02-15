@@ -97,14 +97,25 @@ def _select_region(prompt_label: str = "GCP region") -> str:
     return typer.prompt(prompt_label, default="us-central1")
 
 
-def _enable_services(project: str) -> None:
+def _enable_services(
+    project: str,
+    *,
+    include_image_build: bool = True,
+    include_batch: bool = True,
+) -> None:
     services = [
-        "cloudbuild.googleapis.com",
-        "artifactregistry.googleapis.com",
-        "batch.googleapis.com",
         "logging.googleapis.com",
         "storage.googleapis.com",
     ]
+    if include_batch:
+        services.append("batch.googleapis.com")
+    if include_image_build:
+        services.extend(
+            [
+                "cloudbuild.googleapis.com",
+                "artifactregistry.googleapis.com",
+            ]
+        )
     subprocess.run(
         ["gcloud", "services", "enable", *services, "--project", project],
         check=True,
@@ -246,17 +257,33 @@ def _grant_service_account_impersonation(service_account: str, member: str) -> N
     )
 
 
-def _bind_roles(project: str, service_account: str) -> None:
+def _bind_roles(
+    project: str,
+    service_account: str,
+    *,
+    include_image_build: bool = True,
+    include_batch: bool = True,
+) -> None:
     roles = [
         "roles/storage.admin",
-        "roles/artifactregistry.admin",
-        "roles/batch.admin",
-        "roles/batch.agentReporter",
         "roles/logging.viewer",
         "roles/logging.logWriter",
         "roles/monitoring.metricWriter",
-        "roles/cloudbuild.builds.editor",
     ]
+    if include_batch:
+        roles.extend(
+            [
+                "roles/batch.admin",
+                "roles/batch.agentReporter",
+            ]
+        )
+    if include_image_build:
+        roles.extend(
+            [
+                "roles/artifactregistry.admin",
+                "roles/cloudbuild.builds.editor",
+            ]
+        )
     for role in roles:
         subprocess.run(
             [
@@ -279,51 +306,118 @@ def main(
     provider: Optional[str] = typer.Option(None, "--provider", help="Provider (gcp|prime)"),
 ):
     console = get_console()
-    _require_gcloud()
     chosen_provider = provider or typer.prompt("Provider", default="gcp")
     if chosen_provider not in {"gcp", "prime"}:
         raise ConfigError("Provider must be 'gcp' or 'prime'")
 
-    if not _credentials_valid():
-        console.print("[info]Launching gcloud Application Default Credentials login...[/info]")
-        _run_gcloud_adc_login()
-        if not _credentials_valid() and not _adc_file_exists():
-            raise RuntimeError(
-                "ADC login completed but credentials are still invalid. "
-                "Check gcloud auth configuration."
-            )
-    console.print("[success]GCP credentials ready.[/success]")
+    project = ""
+    region = ""
+    bucket = ""
+    repo = ""
+    service_account = ""
+    prime_image_build = False
 
-    project = _select_project(console)
-    region = _select_region()
-    console.print(f"[info]Using project {project} in region {region}[/info]")
-
-    provision = typer.confirm(
-        "Provision GCP resources with gcloud?",
-        default=True,
-    )
-    if provision:
-        console.print("[info]Enabling required services...[/info]")
-        _enable_services(project)
-
-        console.print("[info]Creating resources...[/info]")
-        bucket = _create_bucket(project, region)
-        repo = _create_artifact_repo(project, region)
-        service_account = _create_service_account(project)
-        _bind_roles(project, service_account)
-        if chosen_provider == "prime":
-            account = _active_gcloud_account()
-            if account:
-                member_prefix = "serviceAccount" if account.endswith("gserviceaccount.com") else "user"
-                _grant_service_account_impersonation(
-                    service_account,
-                    f"{member_prefix}:{account}",
+    if chosen_provider == "gcp":
+        _require_gcloud()
+        if not _credentials_valid():
+            console.print("[info]Launching gcloud Application Default Credentials login...[/info]")
+            _run_gcloud_adc_login()
+            if not _credentials_valid() and not _adc_file_exists():
+                raise RuntimeError(
+                    "ADC login completed but credentials are still invalid. "
+                    "Check gcloud auth configuration."
                 )
+        console.print("[success]GCP credentials ready.[/success]")
+        project = _select_project(console)
+        region = _select_region()
+        console.print(f"[info]Using project {project} in region {region}[/info]")
+        provision = typer.confirm("Provision GCP resources with gcloud?", default=True)
+        if provision:
+            console.print("[info]Enabling required services...[/info]")
+            _enable_services(project, include_image_build=True, include_batch=True)
+            console.print("[info]Creating resources...[/info]")
+            bucket = _create_bucket(project, region)
+            repo = _create_artifact_repo(project, region)
+            service_account = _create_service_account(project)
+            _bind_roles(
+                project,
+                service_account,
+                include_image_build=True,
+                include_batch=True,
+            )
+        else:
+            console.print("[info]Skipping gcloud provisioning.[/info]")
+            bucket = typer.prompt("GCS bucket name")
+            repo = typer.prompt("Artifact Registry repo name", default="coral")
+            service_account = typer.prompt("Service account email")
     else:
-        console.print("[info]Skipping gcloud provisioning.[/info]")
-        bucket = typer.prompt("GCS bucket name")
-        repo = typer.prompt("Artifact Registry repo name", default="coral")
-        service_account = typer.prompt("Service account email")
+        prime_image_build = typer.confirm(
+            "Configure Google-backed image building for Prime?",
+            default=False,
+        )
+        use_gcloud = typer.confirm(
+            "Use gcloud to configure Prime artifact resources?",
+            default=True,
+        )
+        if use_gcloud:
+            _require_gcloud()
+            if not _credentials_valid():
+                console.print(
+                    "[info]Launching gcloud Application Default Credentials login...[/info]"
+                )
+                _run_gcloud_adc_login()
+                if not _credentials_valid() and not _adc_file_exists():
+                    raise RuntimeError(
+                        "ADC login completed but credentials are still invalid. "
+                        "Check gcloud auth configuration."
+                    )
+            console.print("[success]GCP credentials ready.[/success]")
+            project = _select_project(console)
+            region = _select_region()
+            console.print(f"[info]Using project {project} in region {region}[/info]")
+            provision = typer.confirm("Provision GCP resources with gcloud?", default=True)
+            if provision:
+                console.print("[info]Enabling required services...[/info]")
+                _enable_services(
+                    project,
+                    include_image_build=prime_image_build,
+                    include_batch=False,
+                )
+                console.print("[info]Creating resources...[/info]")
+                bucket = _create_bucket(project, region)
+                repo = _create_artifact_repo(project, region) if prime_image_build else ""
+                service_account = _create_service_account(project)
+                _bind_roles(
+                    project,
+                    service_account,
+                    include_image_build=prime_image_build,
+                    include_batch=False,
+                )
+                account = _active_gcloud_account()
+                if account:
+                    member_prefix = (
+                        "serviceAccount" if account.endswith("gserviceaccount.com") else "user"
+                    )
+                    _grant_service_account_impersonation(
+                        service_account,
+                        f"{member_prefix}:{account}",
+                    )
+            else:
+                console.print("[info]Skipping gcloud provisioning.[/info]")
+                bucket = typer.prompt("GCS bucket name")
+                service_account = typer.prompt("Service account email", default="")
+                if prime_image_build:
+                    repo = typer.prompt("Artifact Registry repo name", default="coral")
+        else:
+            console.print("[info]Skipping gcloud auth/provisioning.[/info]")
+            project = typer.prompt("GCP project ID for artifacts")
+            bucket = typer.prompt("GCS bucket name for artifacts")
+            service_account = typer.prompt("Service account email (optional)", default="")
+            if prime_image_build:
+                region = _select_region("GCP region for image builds")
+                repo = typer.prompt("Artifact Registry repo name", default="coral")
+            else:
+                region = typer.prompt("GCP region (optional)", default="")
 
     profile_name = profile or "default"
     data = load_config()
@@ -360,18 +454,23 @@ def main(
         prime_data.update(
             {
                 "api_key": api_key,
-                "team_id": team_id or None,
                 "gcp_project": project,
-                "gcp_region": region,
-                "artifact_repo": repo,
                 "gcs_bucket": bucket,
-                "service_account": service_account,
                 "gpu_type": gpu_type,
                 "gpu_count": gpu_count,
                 "regions": regions,
-                "registry_credentials_id": registry_credentials_id or None,
             }
         )
+        if team_id:
+            prime_data["team_id"] = team_id
+        if region:
+            prime_data["gcp_region"] = region
+        if repo:
+            prime_data["artifact_repo"] = repo
+        if service_account:
+            prime_data["service_account"] = service_account
+        if registry_credentials_id:
+            prime_data["registry_credentials_id"] = registry_credentials_id
 
     write_config(data)
     console.print("[success]Wrote config to ~/.coral/config.toml[/success]")

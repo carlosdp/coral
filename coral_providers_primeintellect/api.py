@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,21 @@ class PrimeClient:
         if self.team_id:
             headers["X-Prime-Team-ID"] = self.team_id
         return headers
+
+    def _raise_for_status(self, resp: requests.Response) -> None:
+        if resp.ok:
+            return
+        try:
+            body_text = json.dumps(resp.json(), ensure_ascii=True)
+        except ValueError:
+            body_text = resp.text.strip()
+        if len(body_text) > 4000:
+            body_text = body_text[:4000] + "...(truncated)"
+        message = (
+            f"{resp.status_code} Client Error: {resp.reason} for url: {resp.url}"
+            f"\nResponse body: {body_text}"
+        )
+        raise requests.HTTPError(message, response=resp)
 
     def availability_gpus(
         self,
@@ -37,7 +53,7 @@ class PrimeClient:
             params=params,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         items = resp.json().get("items", [])
         if provider:
             items = [
@@ -61,7 +77,7 @@ class PrimeClient:
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def create_pod(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,7 +87,7 @@ class PrimeClient:
             json=payload,
             timeout=60,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def get_pod(self, pod_id: str) -> Dict[str, Any]:
@@ -80,7 +96,7 @@ class PrimeClient:
             headers=self._headers(),
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def get_pods_status(self, pod_ids: List[str]) -> Dict[str, Any]:
@@ -91,7 +107,7 @@ class PrimeClient:
             params=params,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def list_images(self) -> List[Dict[str, Any]]:
@@ -100,7 +116,7 @@ class PrimeClient:
             headers=self._headers(),
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         data = resp.json()
         return data.get("data") or data.get("items") or []
 
@@ -124,7 +140,7 @@ class PrimeClient:
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def get_image_build(self, build_id: str) -> Dict[str, Any]:
@@ -133,7 +149,7 @@ class PrimeClient:
             headers=self._headers(),
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def start_image_build(self, build_id: str) -> Dict[str, Any]:
@@ -142,7 +158,7 @@ class PrimeClient:
             headers=self._headers(),
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def upload_build_context(self, upload_url: str, archive_path: str) -> None:
@@ -152,7 +168,7 @@ class PrimeClient:
                 data=archive,
                 timeout=300,
             )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
 
     def get_pod_logs(self, pod_id: str, tail: int = 200) -> str:
         resp = requests.get(
@@ -161,7 +177,7 @@ class PrimeClient:
             params={"tail": tail},
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         try:
             data = resp.json()
             if isinstance(data, dict):
@@ -176,4 +192,40 @@ class PrimeClient:
             headers=self._headers(),
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
+
+    def list_ssh_keys(self, offset: int = 0, limit: int = 200) -> List[Dict[str, Any]]:
+        resp = requests.get(
+            f"{self.base_url}/api/v1/ssh_keys/",
+            headers=self._headers(),
+            params={"offset": offset, "limit": limit},
+            timeout=30,
+        )
+        self._raise_for_status(resp)
+        data = resp.json()
+        return data.get("data") or []
+
+    def upload_ssh_key(self, name: str, public_key: str) -> Dict[str, Any]:
+        payload = {
+            "name": name,
+            "publicKey": public_key,
+        }
+        resp = requests.post(
+            f"{self.base_url}/api/v1/ssh_keys/",
+            headers=self._headers(),
+            json=payload,
+            timeout=30,
+        )
+        self._raise_for_status(resp)
+        return resp.json()
+
+    def set_primary_ssh_key(self, key_id: str, is_primary: bool = True) -> Dict[str, Any]:
+        payload = {"isPrimary": is_primary}
+        resp = requests.patch(
+            f"{self.base_url}/api/v1/ssh_keys/{key_id}",
+            headers=self._headers(),
+            json=payload,
+            timeout=30,
+        )
+        self._raise_for_status(resp)
+        return resp.json()

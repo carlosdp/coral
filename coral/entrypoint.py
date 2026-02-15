@@ -13,6 +13,12 @@ from coral.errors import CoralError
 from coral.image import build_plan_hash
 from coral.packaging import BundleResult, create_bundle
 from coral.providers.base import BundleRef, ImageRef, RunHandle, RunResult
+from coral.runtime_setup import (
+    CORAL_IMAGE_BUILD_DISABLED_ENV,
+    CORAL_IMAGE_BUILD_DISABLED_METADATA,
+    CORAL_RUNTIME_SETUP_B64_ENV,
+    encode_runtime_setup_payload,
+)
 from coral.serialization import SERIALIZATION_VERSION, dumps
 from coral.spec import CallSpec, FunctionSpec, ImageSpec
 
@@ -33,9 +39,9 @@ class RunSession:
 
     def __post_init__(self):
         self.run_id = uuid.uuid4().hex
-        self._bundle_ref: BundleRef | None = None
-        self._image_ref: ImageRef | None = None
-        self._bundle_result: BundleResult | None = None
+        self._bundle_refs: Dict[str, BundleRef] = {}
+        self._bundle_results: Dict[str, BundleResult] = {}
+        self._image_refs: Dict[str, ImageRef] = {}
 
     def __enter__(self):
         self.app._set_session(self)
@@ -90,12 +96,28 @@ class RunSession:
                 roots.append(source_file.parent.resolve())
         return roots
 
-    def _bundle(self, image: ImageSpec) -> BundleRef:
-        if self._bundle_ref is not None:
-            return self._bundle_ref
+    def _bundle(
+        self,
+        image: ImageSpec,
+        include_copy_sources: bool = False,
+        upload: bool = True,
+        extra_roots: List[Path] | None = None,
+    ) -> BundleRef:
+        mode = "copy" if include_copy_sources else "sync"
+        storage_mode = "upload" if upload else "local"
+        extra_root_key = ",".join(
+            sorted(str(root.resolve()) for root in (extra_roots or []))
+        )
+        cache_key = f"{build_plan_hash(image)}:{mode}:{storage_mode}:{extra_root_key}"
+        if cache_key in self._bundle_refs:
+            return self._bundle_refs[cache_key]
 
-        sync_sources, _copy_sources, sync_ignores = self._resolve_local_sources(image)
+        sync_sources, copy_sources, sync_ignores = self._resolve_local_sources(image)
         roots = self._app_source_roots(self.app) + sync_sources
+        if include_copy_sources:
+            roots += copy_sources
+        if extra_roots:
+            roots += [root.resolve() for root in extra_roots]
         self._status("Uploading files")
         if self.verbose:
             from coral.logging import get_console
@@ -113,12 +135,18 @@ class RunSession:
             get_console().print(
                 f"[info]Bundle hash:[/info] {bundle_result.hash}"
             )
+        if not upload:
+            local_ref = BundleRef(uri=bundle_result.path, hash=bundle_result.hash)
+            self._bundle_refs[cache_key] = local_ref
+            self._bundle_results[cache_key] = bundle_result
+            self._status("Prepared local bundle")
+            return local_ref
         if not self.no_cache and bundle_result.hash in bundle_cache:
             cached = bundle_cache[bundle_result.hash]
             self._status("Using cached bundle")
-            self._bundle_ref = BundleRef(uri=cached["uri"], hash=bundle_result.hash)
-            self._bundle_result = bundle_result
-            return self._bundle_ref
+            self._bundle_refs[cache_key] = BundleRef(uri=cached["uri"], hash=bundle_result.hash)
+            self._bundle_results[cache_key] = bundle_result
+            return self._bundle_refs[cache_key]
 
         artifact_store = self.provider.get_artifacts()
         bundle_ref = artifact_store.put_bundle(bundle_result.path, bundle_result.hash)
@@ -131,14 +159,14 @@ class RunSession:
             )
         bundle_cache[bundle_result.hash] = {"uri": bundle_ref.uri}
         self._save_index(BUNDLE_INDEX, bundle_cache)
-        self._bundle_ref = bundle_ref
-        self._bundle_result = bundle_result
+        self._bundle_refs[cache_key] = bundle_ref
+        self._bundle_results[cache_key] = bundle_result
         return bundle_ref
 
     def _image(self, image: ImageSpec) -> ImageRef:
-        if self._image_ref is not None:
-            return self._image_ref
         image_hash = build_plan_hash(image)
+        if image_hash in self._image_refs:
+            return self._image_refs[image_hash]
         self._status("Building image")
         if self.verbose:
             from coral.logging import get_console
@@ -147,7 +175,7 @@ class RunSession:
         image_cache = self._load_index(IMAGE_INDEX)
         if not self.no_cache and image_hash in image_cache:
             cached = image_cache[image_hash]
-            self._image_ref = ImageRef(
+            self._image_refs[image_hash] = ImageRef(
                 uri=cached["uri"],
                 digest=cached["digest"],
                 metadata=cached.get("metadata", {}),
@@ -157,9 +185,9 @@ class RunSession:
                 from coral.logging import get_console
 
                 get_console().print(
-                    f"[info]Using cached image:[/info] {self._image_ref.uri}"
+                    f"[info]Using cached image:[/info] {self._image_refs[image_hash].uri}"
                 )
-            return self._image_ref
+            return self._image_refs[image_hash]
 
         _sync_sources, copy_sources, _sync_ignores = self._resolve_local_sources(image)
         builder = self.provider.get_builder()
@@ -177,8 +205,15 @@ class RunSession:
             "metadata": image_ref.metadata,
         }
         self._save_index(IMAGE_INDEX, image_cache)
-        self._image_ref = image_ref
+        self._image_refs[image_hash] = image_ref
         return image_ref
+
+    def _default_runtime_image(self) -> ImageRef:
+        return ImageRef(
+            uri="",
+            digest="",
+            metadata={CORAL_IMAGE_BUILD_DISABLED_METADATA: "1"},
+        )
 
     def prepare(self):
         image = self.app.image
@@ -192,8 +227,24 @@ class RunSession:
 
     def submit(self, spec: FunctionSpec, args: tuple, kwargs: dict) -> RunHandle:
         image = spec.image or self.app.image
-        image_ref = self._image(image)
-        bundle_ref = self._bundle(image)
+        provider_name = getattr(self.provider, "name", "")
+        prime_no_build = provider_name == "prime" and not spec.build_image
+        if self.detached and not spec.build_image and provider_name == "prime":
+            raise CoralError(
+                "Prime detached runs are not supported when build_image is disabled."
+            )
+        image_ref = self._image(image) if spec.build_image else self._default_runtime_image()
+        extra_bundle_roots: List[Path] = []
+        if prime_no_build:
+            # Prime no-build execution imports app modules directly on the host.
+            # Include the Coral SDK source so `import coral` resolves consistently.
+            extra_bundle_roots.append(Path(__file__).resolve().parent)
+        bundle_ref = self._bundle(
+            image,
+            include_copy_sources=not spec.build_image,
+            upload=not prime_no_build,
+            extra_roots=extra_bundle_roots,
+        )
         self._status("Spawning container")
         if self.verbose:
             from coral.logging import get_console
@@ -203,7 +254,9 @@ class RunSession:
             )
 
         call_id = uuid.uuid4().hex
-        result_uri = self.provider.get_artifacts().result_uri(call_id)
+        result_uri = ""
+        if not prime_no_build:
+            result_uri = self.provider.get_artifacts().result_uri(call_id)
         call_spec = CallSpec(
             call_id=call_id,
             module=spec.module,
@@ -220,8 +273,16 @@ class RunSession:
             },
         )
         env = dict(self.env or {})
+        if not spec.build_image:
+            runtime_env = dict(image.env)
+            runtime_env.update(env)
+            env = runtime_env
+            env[CORAL_IMAGE_BUILD_DISABLED_ENV] = "1"
+            env[CORAL_RUNTIME_SETUP_B64_ENV] = encode_runtime_setup_payload(image)
         if self.verbose:
             env["CORAL_VERBOSE"] = "1"
+        if self.detached:
+            env["CORAL_DETACHED"] = "1"
         labels = {
             "coral_run_id": self.run_id,
             "coral_app": self.app.name,

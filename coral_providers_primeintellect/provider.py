@@ -19,10 +19,10 @@ from coral_providers_primeintellect.logs import PrimeLogStreamer
 class PrimeConfig:
     api_key: str
     team_id: Optional[str]
-    gcp_project: str
-    gcp_region: str
-    artifact_repo: str
-    gcs_bucket: str
+    gcp_project: Optional[str]
+    gcp_region: Optional[str]
+    artifact_repo: Optional[str]
+    gcs_bucket: Optional[str]
     service_account: Optional[str]
     credentials_path: Optional[str]
     gpu_type: str
@@ -40,46 +40,48 @@ class PrimeIntellectProvider(Provider):
         self.config: PrimeConfig | None = None
         self._status_cb = None
         self._artifacts = None
+        self._executor = None
 
     def set_status_callback(self, cb):
         self._status_cb = cb
 
+    @staticmethod
+    def _optional_value(value: object) -> Optional[str]:
+        if value is None:
+            return None
+        value_str = str(value).strip()
+        if not value_str or value_str.lower() == "none":
+            return None
+        return value_str
+
     def configure(self, profile: Profile) -> None:
         data = profile.data
-        credentials_path = data.get("credentials_path")
+        credentials_path = self._optional_value(data.get("credentials_path"))
         if credentials_path:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser(
                 credentials_path
             )
-        missing = [
-            key
-            for key in [
-                "api_key",
-                "gcp_project",
-                "gcp_region",
-                "artifact_repo",
-                "gcs_bucket",
-            ]
-            if key not in data
-        ]
+        missing = [key for key in ["api_key"] if key not in data]
         if missing:
             raise ConfigError(f"Missing Prime Intellect config keys: {', '.join(missing)}")
         self.config = PrimeConfig(
             api_key=data["api_key"],
-            team_id=data.get("team_id"),
-            gcp_project=data["gcp_project"],
-            gcp_region=data["gcp_region"],
-            artifact_repo=data["artifact_repo"],
-            gcs_bucket=data["gcs_bucket"],
-            service_account=data.get("service_account"),
+            team_id=self._optional_value(data.get("team_id")),
+            gcp_project=self._optional_value(data.get("gcp_project")),
+            gcp_region=self._optional_value(data.get("gcp_region")),
+            artifact_repo=self._optional_value(data.get("artifact_repo")),
+            gcs_bucket=self._optional_value(data.get("gcs_bucket")),
+            service_account=self._optional_value(data.get("service_account")),
             credentials_path=credentials_path,
             gpu_type=data.get("gpu_type", "CPU_NODE"),
             gpu_count=int(data.get("gpu_count", 1)),
             regions=data.get("regions", ["united_states"]),
-            provider_type=data.get("provider_type", None),
-            registry_credentials_id=data.get("registry_credentials_id"),
-            custom_template_id=data.get("custom_template_id"),
+            provider_type=self._optional_value(data.get("provider_type")),
+            registry_credentials_id=self._optional_value(data.get("registry_credentials_id")),
+            custom_template_id=self._optional_value(data.get("custom_template_id")),
         )
+        self._artifacts = None
+        self._executor = None
 
     def _ensure_config(self) -> PrimeConfig:
         if not self.config:
@@ -88,6 +90,11 @@ class PrimeIntellectProvider(Provider):
 
     def get_builder(self):
         cfg = self._ensure_config()
+        if not cfg.gcp_project or not cfg.gcp_region or not cfg.artifact_repo or not cfg.gcs_bucket:
+            raise ConfigError(
+                "Prime image building requires gcp_project, gcp_region, artifact_repo, and "
+                "gcs_bucket in profile.prime."
+            )
         return CloudBuildImageBuilder(
             project=cfg.gcp_project,
             region=cfg.gcp_region,
@@ -97,6 +104,10 @@ class PrimeIntellectProvider(Provider):
 
     def get_artifacts(self):
         cfg = self._ensure_config()
+        if not cfg.gcp_project or not cfg.gcs_bucket:
+            raise ConfigError(
+                "Prime artifacts require gcp_project and gcs_bucket in profile.prime."
+            )
         if self._artifacts is None:
             gcs = GCSArtifactStore(
                 project=cfg.gcp_project,
@@ -108,20 +119,24 @@ class PrimeIntellectProvider(Provider):
 
     def get_executor(self):
         cfg = self._ensure_config()
-        client = PrimeClient(api_key=cfg.api_key, team_id=cfg.team_id)
-        artifacts = self.get_artifacts()
-        return PrimeExecutor(
-            client=client,
-            project=cfg.gcp_project,
-            artifact_store=artifacts,
-            gpu_type=cfg.gpu_type,
-            gpu_count=cfg.gpu_count,
-            regions=cfg.regions,
-            provider_type=cfg.provider_type,
-            registry_credentials_id=cfg.registry_credentials_id,
-            custom_template_id=cfg.custom_template_id,
-            status_cb=self._status_cb,
-        )
+        if self._executor is None:
+            client = PrimeClient(api_key=cfg.api_key, team_id=cfg.team_id)
+            artifacts = self.get_artifacts()
+            self._executor = PrimeExecutor(
+                client=client,
+                project=cfg.gcp_project or "",
+                artifact_store=artifacts,
+                gpu_type=cfg.gpu_type,
+                gpu_count=cfg.gpu_count,
+                regions=cfg.regions,
+                provider_type=cfg.provider_type,
+                registry_credentials_id=cfg.registry_credentials_id,
+                custom_template_id=cfg.custom_template_id,
+                status_cb=self._status_cb,
+            )
+        else:
+            self._executor.status_cb = self._status_cb
+        return self._executor
 
     def get_log_streamer(self):
         cfg = self._ensure_config()

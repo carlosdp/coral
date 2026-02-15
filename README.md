@@ -29,6 +29,9 @@ GCP for image builds/artifacts while running containers on Prime.
 If gcloud prompts for reauthentication during setup, choose "no" when asked to provision
 resources and enter existing GCP resource names instead.
 
+If you disable image building on a function (`@app.function(build_image=False)`), Coral skips
+provider image builds and runs image setup steps at runtime instead.
+
 ```python
 import coral
 
@@ -41,7 +44,7 @@ image = (
 
 app = coral.App(name="simple", image=image)
 
-@app.function(cpu=1, memory="1Gi", timeout=300)
+@app.function(cpu=1, memory="1Gi", timeout=300, build_image=False)
 def process(text: str) -> dict:
     tokens = text.split()
     return {"words": len(tokens), "upper": text.upper()}

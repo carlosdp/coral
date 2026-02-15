@@ -109,6 +109,7 @@ def main(
                                 retries=handle.spec.resources.retries,
                             ),
                             image=handle.spec.image,
+                            build_image=handle.spec.build_image,
                         )
                     if detach:
                         run_handle = handle.spawn(*args)
