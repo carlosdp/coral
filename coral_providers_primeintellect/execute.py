@@ -281,9 +281,9 @@ class PrimeExecutor:
     client: PrimeClient
     project: str
     artifact_store: object
-    gpu_type: str
-    gpu_count: int
     regions: list[str]
+    gpu_type: str = "CPU_NODE"
+    gpu_count: int = 1
     provider_type: str | None = None
     registry_credentials_id: str | None = None
     custom_template_id: str | None = None
@@ -343,12 +343,48 @@ class PrimeExecutor:
             return "image_build"
         return self._run_modes.get(call_id, "image_build")
 
-    def _select_offer(self, timeout: int = 90, poll_interval: int = 5) -> Dict[str, str]:
+    def _requested_gpu(self, resources: ResourceSpec) -> tuple[str, int]:
+        gpu_spec = (resources.gpu or "").strip()
+        if not gpu_spec:
+            return self.gpu_type, self.gpu_count
+        gpu_type = gpu_spec
+        gpu_count = 1
+        if ":" in gpu_spec:
+            gpu_type_raw, gpu_count_raw = gpu_spec.rsplit(":", 1)
+            gpu_type = gpu_type_raw.strip()
+            try:
+                gpu_count = int(gpu_count_raw.strip())
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Invalid Prime GPU count in spec '{gpu_spec}'. "
+                    "Expected format GPU_TYPE:COUNT, e.g. RTX4090_24GB:1"
+                ) from exc
+        gpu_type = gpu_type.strip()
+        if not gpu_type:
+            raise RuntimeError(
+                f"Invalid Prime GPU spec '{gpu_spec}'. "
+                "Expected format GPU_TYPE or GPU_TYPE:COUNT."
+            )
+        if gpu_count < 1:
+            raise RuntimeError(
+                f"Invalid Prime GPU count in spec '{gpu_spec}'. Count must be >= 1."
+            )
+        return gpu_type, gpu_count
+
+    def _select_offer(
+        self,
+        gpu_type: str | None = None,
+        gpu_count: int | None = None,
+        timeout: int = 90,
+        poll_interval: int = 5,
+    ) -> Dict[str, str]:
+        target_gpu_type = gpu_type or self.gpu_type
+        target_gpu_count = gpu_count or self.gpu_count
         deadline = time.time() + timeout
         while True:
             offers = self.client.availability_gpus(
-                gpu_type=self.gpu_type,
-                gpu_count=self.gpu_count,
+                gpu_type=target_gpu_type,
+                gpu_count=target_gpu_count,
                 regions=self.regions,
             )
             if self.provider_type:
@@ -632,15 +668,39 @@ class PrimeExecutor:
             time.sleep(5)
         raise RuntimeError(f"Timed out waiting for Prime pod {pod_id} to become ACTIVE")
 
-    def _get_pod_ssh_connection(self, pod_id: str, active_entry: Dict[str, object]) -> str:
+    def _get_pod_ssh_connection(
+        self,
+        pod_id: str,
+        active_entry: Dict[str, object],
+        timeout: int = 300,
+    ) -> str:
         ssh = active_entry.get("sshConnection") or active_entry.get("ssh_connection")
         if isinstance(ssh, str) and ssh.strip():
             return ssh.strip()
-        pod = self._pod_from_response(self.client.get_pod(pod_id))
-        ssh = pod.get("sshConnection") or pod.get("ssh_connection")
-        if isinstance(ssh, str) and ssh.strip():
-            return ssh.strip()
-        raise RuntimeError(f"Prime pod {pod_id} did not return an SSH connection")
+
+        self._status("Waiting for SSH connection details")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            pod = self._pod_from_response(self.client.get_pod(pod_id))
+            ssh = pod.get("sshConnection") or pod.get("ssh_connection")
+            if isinstance(ssh, str) and ssh.strip():
+                return ssh.strip()
+
+            status_resp = self.client.get_pods_status([pod_id])
+            entries = self._status_entries(status_resp)
+            status = None
+            if entries:
+                status_raw = entries[0].get("status") or entries[0].get("state")
+                if isinstance(status_raw, str):
+                    status = status_raw.upper()
+            if status in {"ERROR", "FAILED", "STOPPED", "TERMINATED"}:
+                raise RuntimeError(
+                    f"Prime pod {pod_id} became {status} before SSH connection was ready"
+                )
+            time.sleep(5)
+        raise RuntimeError(
+            f"Prime pod {pod_id} did not return an SSH connection within {timeout}s"
+        )
 
     def _ssh_base_command(self, ssh_connection: str) -> list[str]:
         if not shutil.which("ssh"):
@@ -849,7 +909,11 @@ class PrimeExecutor:
         if image_build_disabled and env_vars.get("CORAL_DETACHED") == "1":
             raise RuntimeError("Prime no-image-build runs do not support detached mode")
 
-        offer = self._select_offer()
+        requested_gpu_type, requested_gpu_count = self._requested_gpu(resources)
+        offer = self._select_offer(
+            gpu_type=requested_gpu_type,
+            gpu_count=requested_gpu_count,
+        )
         custom_template_id = None
         ssh_key_id: str | None = None
         if image_build_disabled:
@@ -870,7 +934,7 @@ class PrimeExecutor:
                 "cloudId": offer.get("cloudId"),
                 "gpuType": offer.get("gpuType"),
                 "socket": offer.get("socket"),
-                "gpuCount": offer.get("gpuCount", self.gpu_count),
+                "gpuCount": offer.get("gpuCount", requested_gpu_count),
                 "image": pod_image,
                 "dataCenterId": offer.get("dataCenter") or offer.get("dataCenterId"),
                 "country": offer.get("country"),

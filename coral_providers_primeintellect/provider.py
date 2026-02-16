@@ -25,8 +25,6 @@ class PrimeConfig:
     gcs_bucket: Optional[str]
     service_account: Optional[str]
     credentials_path: Optional[str]
-    gpu_type: str
-    gpu_count: int
     regions: list[str]
     provider_type: Optional[str]
     registry_credentials_id: Optional[str]
@@ -73,8 +71,6 @@ class PrimeIntellectProvider(Provider):
             gcs_bucket=self._optional_value(data.get("gcs_bucket")),
             service_account=self._optional_value(data.get("service_account")),
             credentials_path=credentials_path,
-            gpu_type=data.get("gpu_type", "CPU_NODE"),
-            gpu_count=int(data.get("gpu_count", 1)),
             regions=data.get("regions", ["united_states"]),
             provider_type=self._optional_value(data.get("provider_type")),
             registry_credentials_id=self._optional_value(data.get("registry_credentials_id")),
@@ -126,8 +122,8 @@ class PrimeIntellectProvider(Provider):
                 client=client,
                 project=cfg.gcp_project or "",
                 artifact_store=artifacts,
-                gpu_type=cfg.gpu_type,
-                gpu_count=cfg.gpu_count,
+                gpu_type="CPU_NODE",
+                gpu_count=1,
                 regions=cfg.regions,
                 provider_type=cfg.provider_type,
                 registry_credentials_id=cfg.registry_credentials_id,

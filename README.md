@@ -32,6 +32,9 @@ resources and enter existing GCP resource names instead.
 If you disable image building on a function (`@app.function(build_image=False)`), Coral skips
 provider image builds and runs image setup steps at runtime instead.
 
+For Prime, GPU type/count are configured per function using `gpu="GPU_TYPE:COUNT"`
+(for example `gpu="RTX4090_24GB:1"`), not in profile-level config.
+
 ```python
 import coral
 

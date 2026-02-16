@@ -445,8 +445,6 @@ def main(
             "Prime registry credentials ID (optional)",
             default="",
         )
-        gpu_type = typer.prompt("GPU type", default="CPU_NODE")
-        gpu_count = int(typer.prompt("GPU count", default="1"))
         regions_str = typer.prompt("Prime regions (comma-separated)", default="united_states")
         regions = [item.strip() for item in regions_str.split(",") if item.strip()]
 
@@ -456,8 +454,6 @@ def main(
                 "api_key": api_key,
                 "gcp_project": project,
                 "gcs_bucket": bucket,
-                "gpu_type": gpu_type,
-                "gpu_count": gpu_count,
                 "regions": regions,
             }
         )
