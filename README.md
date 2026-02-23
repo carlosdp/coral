@@ -16,6 +16,15 @@ coral --help
 coral run examples/simple.py::main
 ```
 
+## Build/deploy image only
+
+```bash
+coral image examples/simple.py::main
+```
+
+This resolves a hash-based image tag from the image spec, reuses it if already public on Docker
+Hub for your logged-in Docker user, or builds + pushes it otherwise.
+
 ## Prime Intellect provider (optional)
 
 ```bash

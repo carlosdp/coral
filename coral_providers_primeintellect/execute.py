@@ -7,13 +7,13 @@ import os
 import shlex
 import shutil
 import subprocess
-import tarfile
-import tempfile
 import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict
+
+import requests
 
 from coral.providers.base import RunHandle, RunResult
 from coral.runtime_setup import (
@@ -25,6 +25,8 @@ from coral_providers_primeintellect.api import PrimeClient
 
 SSH_RESULT_MARKER = "__CORAL_RESULT_B64__:"
 SSH_ERROR_MARKER = "__CORAL_ERROR_B64__:"
+PRIME_ENV_VALUE_LIMIT = 1024
+PRIME_ENV_CHUNK_SIZE = 1000
 
 SSH_HOST_RUNNER_SCRIPT = textwrap.dedent(
     """
@@ -340,8 +342,8 @@ class PrimeExecutor:
 
     def _run_mode(self, call_id: str) -> str:
         if not self._run_modes:
-            return "image_build"
-        return self._run_modes.get(call_id, "image_build")
+            return "image_build_inline"
+        return self._run_modes.get(call_id, "image_build_inline")
 
     def _requested_gpu(self, resources: ResourceSpec) -> tuple[str, int]:
         gpu_spec = (resources.gpu or "").strip()
@@ -371,13 +373,13 @@ class PrimeExecutor:
             )
         return gpu_type, gpu_count
 
-    def _select_offer(
+    def _select_offers(
         self,
         gpu_type: str | None = None,
         gpu_count: int | None = None,
         timeout: int = 90,
         poll_interval: int = 5,
-    ) -> Dict[str, str]:
+    ) -> list[Dict[str, str]]:
         target_gpu_type = gpu_type or self.gpu_type
         target_gpu_count = gpu_count or self.gpu_count
         deadline = time.time() + timeout
@@ -395,10 +397,8 @@ class PrimeExecutor:
                     or offer.get("providerType") == self.provider_type
                 ]
             if offers:
-                for offer in offers:
-                    if offer.get("status") == "Available":
-                        return offer
-                return offers[0]
+                available = [offer for offer in offers if offer.get("status") == "Available"]
+                return available or offers
             if time.time() >= deadline:
                 provider_hint = ""
                 if self.provider_type:
@@ -409,6 +409,55 @@ class PrimeExecutor:
                 )
             self._status("Waiting for available Prime offer")
             time.sleep(poll_interval)
+
+    def _select_offer(
+        self,
+        gpu_type: str | None = None,
+        gpu_count: int | None = None,
+        timeout: int = 90,
+        poll_interval: int = 5,
+    ) -> Dict[str, str]:
+        return self._select_offers(
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )[0]
+
+    def _is_custom_template_offer_error(self, exc: requests.HTTPError) -> bool:
+        response = getattr(exc, "response", None)
+        body = ""
+        if response is not None:
+            body = (response.text or "").lower()
+        message = str(exc).lower()
+        return (
+            "not supported for image custom_template" in body
+            or "cpu nodes are not allowed in custom templates" in body
+            or "not supported for image custom_template" in message
+            or "cpu nodes are not allowed in custom templates" in message
+        )
+
+    def _encode_pod_env_vars(self, env_vars: Dict[str, str]) -> list[dict[str, str]]:
+        encoded: Dict[str, str] = {}
+        chunkable = {"CORAL_CALLSPEC_B64", "CORAL_BUNDLE_B64"}
+        for key, value in env_vars.items():
+            value_str = str(value)
+            if len(value_str) <= PRIME_ENV_CHUNK_SIZE:
+                encoded[key] = value_str
+                continue
+            if key not in chunkable:
+                raise RuntimeError(
+                    "Prime environment variable "
+                    f"'{key}' exceeds {PRIME_ENV_VALUE_LIMIT} characters."
+                )
+            chunks = [
+                value_str[idx : idx + PRIME_ENV_CHUNK_SIZE]
+                for idx in range(0, len(value_str), PRIME_ENV_CHUNK_SIZE)
+            ]
+            encoded[f"{key}_CHUNKS"] = str(len(chunks))
+            for idx, chunk in enumerate(chunks):
+                encoded[f"{key}_{idx:04d}"] = chunk
+        return [{"key": key, "value": value} for key, value in encoded.items()]
 
     def _default_offer_image(self, offer: Dict[str, str]) -> str:
         images = offer.get("images") or []
@@ -503,125 +552,86 @@ class PrimeExecutor:
     def _template_cache_key(self, image) -> str:
         return image.digest or image.uri
 
-    def _template_name_tag(self, image) -> tuple[str, str]:
+    def _template_image_hash(self, image) -> str:
+        image_hash = str(image.metadata.get("hash") or "").strip()
+        if image_hash:
+            return image_hash.replace("sha256:", "")
         digest = (image.digest or "").replace("sha256:", "")
-        if not digest:
-            digest = hashlib.sha256(image.uri.encode("utf-8")).hexdigest()
-        return "coral", digest[:48]
+        if digest:
+            return digest
+        return hashlib.sha256(image.uri.encode("utf-8")).hexdigest()
 
-    def _find_image(self, image_name: str, image_tag: str) -> Dict[str, str] | None:
-        images = self.client.list_images()
-        for item in images:
-            if item.get("imageName") == image_name and item.get("imageTag") == image_tag:
-                return item
-        return None
+    def _template_name_tag(self, image) -> tuple[str, str]:
+        image_hash = self._template_image_hash(image)
+        return "train", image_hash[:48]
 
-    def _wait_for_image_ready(
-        self,
-        image_name: str,
-        image_tag: str,
-        timeout: int = 1800,
-    ) -> Dict[str, str]:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            item = self._find_image(image_name, image_tag)
-            if item:
-                status = item.get("status")
-                if status == "COMPLETED":
-                    return item
-                if status in {"FAILED", "CANCELLED"}:
-                    raise RuntimeError(
-                        f"Prime Intellect image build failed for {image_name}:{image_tag}"
-                    )
-            time.sleep(5)
-        raise RuntimeError(
-            f"Timed out waiting for Prime Intellect image build for {image_name}:{image_tag}"
+    def _parse_image_ref(self, image_uri: str) -> tuple[str, str]:
+        image_uri = image_uri.strip()
+        if not image_uri:
+            raise RuntimeError("Prime image URI is empty")
+        last_slash = image_uri.rfind("/")
+        last_colon = image_uri.rfind(":")
+        if last_colon > last_slash:
+            return image_uri[:last_colon], image_uri[last_colon + 1 :]
+        return image_uri, ""
+
+    def _source_image_ref(self, image) -> str:
+        image_uri = str(image.uri).strip()
+        base_ref, tag = self._parse_image_ref(image_uri)
+        if tag:
+            return image_uri
+        image_hash = self._template_image_hash(image)
+        return f"{base_ref}:{image_hash[:48]}"
+
+    def _latest_image_ref(self, image) -> str:
+        source_ref = self._source_image_ref(image)
+        base_ref, _tag = self._parse_image_ref(source_ref)
+        return f"{base_ref}:latest"
+
+    def _docker_cli(self) -> str:
+        docker = shutil.which("docker")
+        if not docker:
+            raise RuntimeError(
+                "Docker CLI is required to push the latest tag for the Prime template image."
+            )
+        return docker
+
+    def _docker_has_image(self, docker: str, image_ref: str) -> bool:
+        completed = subprocess.run(
+            [docker, "image", "inspect", image_ref],
+            capture_output=True,
+            text=True,
+            check=False,
         )
+        return completed.returncode == 0
 
-    def _create_template_build_context(self, image_uri: str) -> tuple[str, str]:
-        tmpdir = tempfile.mkdtemp(prefix="coral-prime-template-")
-        dockerfile_path = os.path.join(tmpdir, "Dockerfile")
-        with open(dockerfile_path, "w", encoding="utf-8") as handle:
-            handle.write(f"FROM {image_uri}\n")
-        archive_path = os.path.join(tmpdir, "context.tar.gz")
-        with tarfile.open(archive_path, "w:gz") as archive:
-            archive.add(dockerfile_path, arcname="Dockerfile")
-        return archive_path, tmpdir
+    def _sync_latest_template_image(self, image) -> None:
+        docker = self._docker_cli()
+        source_ref = self._source_image_ref(image)
+        latest_ref = self._latest_image_ref(image)
+
+        if not self._docker_has_image(docker, source_ref):
+            self._status("Pulling template source image")
+            subprocess.run([docker, "pull", source_ref], check=True)
+
+        self._status("Tagging template image as latest")
+        subprocess.run([docker, "tag", source_ref, latest_ref], check=True)
+        self._status("Pushing latest template tag")
+        subprocess.run([docker, "push", latest_ref], check=True)
 
     def _ensure_custom_template_id(self, image) -> str:
         template_id = self._resolve_custom_template_id(image)
-        if template_id:
-            return template_id
-
         cache_key = self._template_cache_key(image)
-        image_name, image_tag = self._template_name_tag(image)
-
-        existing = self._find_image(image_name, image_tag)
-        if existing:
-            status = existing.get("status")
-            if status == "COMPLETED":
-                template_id = existing.get("id")
-                if template_id:
-                    self._store_template_id(cache_key, template_id)
-                    return template_id
-            if status in {"PENDING", "UPLOADING", "BUILDING"}:
-                ready = self._wait_for_image_ready(image_name, image_tag)
-                template_id = ready.get("id")
-                if template_id:
-                    self._store_template_id(cache_key, template_id)
-                    return template_id
-
-        if self.registry_credentials_id:
-            check = self.client.check_docker_image(image.uri, self.registry_credentials_id)
-        else:
-            check = self.client.check_docker_image(image.uri)
-        if check.get("accessible") is False:
-            raise RuntimeError(
-                f"Prime Intellect cannot access image {image.uri}: {check.get('details')}"
-            )
-
-        self._status("Creating Prime Intellect custom template")
-        archive_path, tmpdir = self._create_template_build_context(image.uri)
-        try:
-            build = self.client.create_image_build(
-                image_name=image_name,
-                image_tag=image_tag,
-                dockerfile_path="Dockerfile",
-                team_id=self.client.team_id,
-            )
-            build_id = build.get("build_id") or build.get("buildId")
-            upload_url = build.get("upload_url") or build.get("uploadUrl")
-            if not build_id or not upload_url:
-                raise RuntimeError(f"Unexpected image build response: {build}")
-            self.client.upload_build_context(upload_url, archive_path)
-            self.client.start_image_build(build_id)
-
-            deadline = time.time() + 1800
-            status = None
-            while time.time() < deadline:
-                build_status = self.client.get_image_build(build_id)
-                status = build_status.get("status")
-                if status == "COMPLETED":
-                    break
-                if status in {"FAILED", "CANCELLED"}:
-                    raise RuntimeError(
-                        f"Prime Intellect image build failed: {build_status.get('errorMessage')}"
-                    )
-                time.sleep(5)
-            if status != "COMPLETED":
-                raise RuntimeError("Timed out waiting for Prime Intellect image build to finish")
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-
-        ready = self._wait_for_image_ready(image_name, image_tag)
-        template_id = ready.get("id") or ready.get("fullImagePath") or f"{image_name}:{image_tag}"
         if not template_id:
             raise RuntimeError(
-                "Prime Intellect image build completed but template ID was not found for "
-                f"{image_name}:{image_tag}"
+                "Prime custom_template_id is required. "
+                "Configure profile.prime.custom_template_id with an existing template ID."
             )
         self._store_template_id(cache_key, template_id)
         return template_id
+
+    def ensure_custom_template(self, image) -> str:
+        return self._ensure_custom_template_id(image)
 
     def _status_entries(self, status_resp: Dict[str, object]) -> list[Dict[str, object]]:
         data = status_resp.get("data")
@@ -910,58 +920,96 @@ class PrimeExecutor:
             raise RuntimeError("Prime no-image-build runs do not support detached mode")
 
         requested_gpu_type, requested_gpu_count = self._requested_gpu(resources)
-        offer = self._select_offer(
+        offers = self._select_offers(
             gpu_type=requested_gpu_type,
             gpu_count=requested_gpu_count,
         )
+        default_offer = offers[0]
         custom_template_id = None
-        ssh_key_id: str | None = None
+        ssh_key_id = None
+        setup_b64 = ""
         if image_build_disabled:
             ssh_key_id = self._ensure_ssh_key_id()
-            pod_image = self._default_offer_image(offer)
+            pod_image = self._default_offer_image(default_offer)
+            setup_b64 = env_vars.get("CORAL_RUNTIME_SETUP_B64", "")
         else:
-            offer_images = offer.get("images") or []
-            if image.uri in offer_images:
-                pod_image = image.uri
-            else:
-                custom_template_id = self._ensure_custom_template_id(image)
-                pod_image = "custom_template"
-        provider_type = offer.get("provider") or offer.get("providerType") or self.provider_type
-        if not provider_type:
-            raise RuntimeError("Missing provider type for Prime Intellect pod creation")
-        payload = {
-            "pod": {
-                "cloudId": offer.get("cloudId"),
-                "gpuType": offer.get("gpuType"),
-                "socket": offer.get("socket"),
-                "gpuCount": offer.get("gpuCount", requested_gpu_count),
-                "image": pod_image,
-                "dataCenterId": offer.get("dataCenter") or offer.get("dataCenterId"),
-                "country": offer.get("country"),
-                "security": offer.get("security"),
-                "sshKeyId": ssh_key_id,
-                "envVars": (
-                    None
-                    if image_build_disabled
-                    else [{"key": key, "value": value} for key, value in env_vars.items()]
-                ),
-            },
-            "provider": {"type": provider_type},
-        }
-        if pod_image == "custom_template":
-            if not custom_template_id:
-                custom_template_id = self._ensure_custom_template_id(image)
-            payload["pod"]["customTemplateId"] = custom_template_id
-        if self.client.team_id:
-            payload["team"] = {"teamId": self.client.team_id}
-        payload["pod"] = {key: value for key, value in payload["pod"].items() if value is not None}
-        self._status("Spawning container")
-        response = self.client.create_pod(payload)
+            if not bundle.uri:
+                raise RuntimeError("Prime image-build runs require a local bundle path")
+            custom_template_id = self._ensure_custom_template_id(image)
+            self._status("Updating Prime template image tag")
+            self._sync_latest_template_image(image)
+            bundle_bytes = Path(os.path.expanduser(bundle.uri)).read_bytes()
+            bundle_b64 = base64.b64encode(bundle_bytes).decode("utf-8")
+            if len(bundle_b64) > 900_000:
+                raise RuntimeError(
+                    "Prime inline bundle payload is too large for custom template execution. "
+                    "Reduce project bundle size or use build_image=False."
+                )
+            env_vars.pop("CORAL_BUNDLE_URI", None)
+            env_vars.pop("CORAL_RESULT_URI", None)
+            env_vars["CORAL_BUNDLE_B64"] = bundle_b64
+            env_vars["CORAL_RESULT_STDOUT"] = "1"
+            pod_image = "custom_template"
+        response = None
+        template_rejections: list[str] = []
+        for offer in offers:
+            provider_type = offer.get("provider") or offer.get("providerType") or self.provider_type
+            if not provider_type:
+                raise RuntimeError("Missing provider type for Prime Intellect pod creation")
+            payload = {
+                "pod": {
+                    "cloudId": offer.get("cloudId"),
+                    "gpuType": offer.get("gpuType"),
+                    "socket": offer.get("socket"),
+                    "gpuCount": offer.get("gpuCount", requested_gpu_count),
+                    "image": pod_image,
+                    "dataCenterId": offer.get("dataCenter") or offer.get("dataCenterId"),
+                    "country": offer.get("country"),
+                    "security": offer.get("security"),
+                    "sshKeyId": ssh_key_id,
+                    "envVars": (
+                        None
+                        if image_build_disabled
+                        else self._encode_pod_env_vars(env_vars)
+                    ),
+                },
+                "provider": {"type": provider_type},
+            }
+            if pod_image == "custom_template":
+                if not custom_template_id:
+                    custom_template_id = self._ensure_custom_template_id(image)
+                payload["pod"]["customTemplateId"] = custom_template_id
+            if self.client.team_id:
+                payload["team"] = {"teamId": self.client.team_id}
+            payload["pod"] = {
+                key: value for key, value in payload["pod"].items() if value is not None
+            }
+            self._status("Spawning container")
+            try:
+                response = self.client.create_pod(payload)
+                break
+            except requests.HTTPError as exc:
+                if pod_image == "custom_template" and self._is_custom_template_offer_error(exc):
+                    template_rejections.append(str(provider_type))
+                    self._status(
+                        "Prime provider "
+                        f"'{provider_type}' does not support custom templates; trying next offer"
+                    )
+                    continue
+                raise
+        if response is None:
+            providers_text = ", ".join(template_rejections) if template_rejections else "none"
+            raise RuntimeError(
+                "No available Prime offers support this custom template. "
+                f"Tried providers: {providers_text}"
+            )
         pod_id = self._pod_id_from_response(response)
         if not pod_id:
             raise RuntimeError(f"Unexpected Prime Intellect response: {response}")
         if image_build_disabled:
             self._store_run_mode(call_spec.call_id, "host_setup")
+            if not bundle.uri:
+                raise RuntimeError("Prime host execution requires a local bundle path")
             internal_env = {
                 "CORAL_CALLSPEC_B64",
                 "CORAL_RUNTIME_SETUP_B64",
@@ -969,6 +1017,7 @@ class PrimeExecutor:
                 "CORAL_RESULT_URI",
                 "CORAL_IMAGE_BUILD_DISABLED",
                 "CORAL_DETACHED",
+                "PYTHONUNBUFFERED",
             }
             user_env = {
                 key: value
@@ -982,22 +1031,72 @@ class PrimeExecutor:
                 call_id=call_spec.call_id,
                 callspec_b64=call_spec_b64,
                 bundle_path=bundle.uri,
-                setup_b64=env_vars.get("CORAL_RUNTIME_SETUP_B64", ""),
+                setup_b64=setup_b64,
                 user_env_b64=user_env_b64,
             )
         else:
-            self._store_run_mode(call_spec.call_id, "image_build")
-        if call_spec.result_ref:
-            self._store_result_ref(call_spec.call_id, call_spec.result_ref)
+            self._store_run_mode(call_spec.call_id, "image_build_inline")
         return RunHandle(
             run_id=call_spec.log_labels.get("coral_run_id", ""),
             call_id=call_spec.call_id,
             provider_ref=pod_id,
         )
 
+    def _decode_inline_payload(self, logs: str) -> tuple[bool, bytes] | None:
+        for line in reversed(logs.splitlines()):
+            if line.startswith(SSH_RESULT_MARKER):
+                encoded = line[len(SSH_RESULT_MARKER) :].strip()
+                return True, base64.b64decode(encoded.encode("utf-8"))
+            if line.startswith(SSH_ERROR_MARKER):
+                encoded = line[len(SSH_ERROR_MARKER) :].strip()
+                return False, base64.b64decode(encoded.encode("utf-8"))
+        return None
+
+    def _wait_image_build_inline(self, handle: RunHandle, timeout: int = 1200) -> RunResult:
+        last_status = None
+        status = "UNKNOWN"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status_resp = self.client.get_pods_status([handle.provider_ref])
+            entries = self._status_entries(status_resp)
+            if entries:
+                status_raw = entries[0].get("status") or entries[0].get("state")
+                if isinstance(status_raw, str):
+                    status = status_raw.upper()
+            if status and status != last_status:
+                self._status(f"Prime {status.lower()}")
+                last_status = status
+
+            logs = self.client.get_pod_logs(handle.provider_ref, tail=500)
+            inline = self._decode_inline_payload(logs)
+            if inline is not None:
+                success, output = inline
+                return RunResult(call_id=handle.call_id, success=success, output=output)
+
+            if status in {"SUCCEEDED", "FAILED", "STOPPED"}:
+                break
+            time.sleep(5)
+        else:
+            message = (
+                f"Timed out waiting for Prime pod {handle.provider_ref} "
+                f"to finish (last status: {status})."
+            )
+            return RunResult(call_id=handle.call_id, success=False, output=message.encode("utf-8"))
+
+        final_logs = self.client.get_pod_logs(handle.provider_ref, tail=500)
+        inline = self._decode_inline_payload(final_logs)
+        if inline is not None:
+            success, output = inline
+            return RunResult(call_id=handle.call_id, success=success, output=output)
+        message = (
+            f"Prime pod finished with status {status} but did not emit a Coral result marker."
+        )
+        return RunResult(call_id=handle.call_id, success=False, output=message.encode("utf-8"))
+
     def wait(self, handle: RunHandle) -> RunResult:
         self._status("Container running")
-        if self._run_mode(handle.call_id) == "host_setup":
+        mode = self._run_mode(handle.call_id)
+        if mode == "host_setup":
             try:
                 success, output = self._wait_host_setup(handle)
             except Exception as exc:
@@ -1006,6 +1105,8 @@ class PrimeExecutor:
             if success:
                 output = base64.b64encode(output)
             return RunResult(call_id=handle.call_id, success=success, output=output)
+        if mode == "image_build_inline":
+            return self._wait_image_build_inline(handle)
 
         last_status = None
         while True:

@@ -1,44 +1,37 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Optional
 
 from coral.providers.base import BundleRef
-from coral_providers_gcp.artifacts import GCSArtifactStore
 
 
 @dataclass
 class PrimeArtifactStore:
-    gcs: GCSArtifactStore
-    signed_ttl_seconds: int = 3600
+    root: Path = Path.home() / ".coral" / "cache" / "prime"
 
-    def __post_init__(self):
-        self._result_map: Dict[str, str] = {}
+    def _bundle_path(self, bundle_hash: str) -> Path:
+        return self.root / "bundles" / f"{bundle_hash}.tar.gz"
+
+    def _result_path(self, call_id: str) -> Path:
+        return self.root / "results" / f"{call_id}.bin"
 
     def put_bundle(self, bundle_path: str, bundle_hash: str) -> BundleRef:
-        ref = self.gcs.put_bundle(bundle_path, bundle_hash)
-        signed = self.gcs.signed_url(ref.uri, self.signed_ttl_seconds, method="GET")
-        if not signed:
-            raise RuntimeError(
-                "Prime Intellect requires signed GCS URLs. Set profile.prime.service_account "
-                "or profile.prime.credentials_path to a service account key."
-            )
-        return BundleRef(uri=signed, hash=bundle_hash)
+        dst = self._bundle_path(bundle_hash)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copyfile(bundle_path, dst)
+        return BundleRef(uri=str(dst), hash=bundle_hash)
 
     def result_uri(self, call_id: str) -> str:
-        gs_uri = self.gcs.result_uri(call_id)
-        signed = self.gcs.signed_url(gs_uri, self.signed_ttl_seconds, method="PUT")
-        if not signed:
-            raise RuntimeError(
-                "Prime Intellect requires signed GCS URLs. Set profile.prime.service_account "
-                "or profile.prime.credentials_path to a service account key."
-            )
-        self._result_map[signed] = gs_uri
-        return signed
+        path = self._result_path(call_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def get_result(self, result_ref: str) -> bytes:
-        gs_uri = self._result_map.get(result_ref, result_ref)
-        return self.gcs.get_result(gs_uri)
+        return Path(result_ref).read_bytes()
 
     def signed_url(self, uri: str, ttl_seconds: int, method: str = "GET") -> Optional[str]:
-        return self.gcs.signed_url(uri, ttl_seconds, method=method)
+        return uri

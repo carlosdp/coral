@@ -1,10 +1,11 @@
 import typer
 
-from coral_cli.commands import build, cache, config, logs, provider, run, setup, stop
+from coral_cli.commands import build, cache, config, image, logs, provider, run, setup, stop
 
 app = typer.Typer(help="Coral SDK CLI")
 app.add_typer(run.app, name="run")
 app.add_typer(build.app, name="build")
+app.add_typer(image.app, name="image")
 app.add_typer(logs.app, name="logs")
 app.add_typer(stop.app, name="stop")
 app.add_typer(provider.app, name="providers")

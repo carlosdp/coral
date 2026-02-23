@@ -7,7 +7,7 @@ from coral.config import Profile
 from coral.errors import ConfigError
 from coral.providers.base import Provider
 from coral_providers_gcp.artifacts import GCSArtifactStore
-from coral_providers_gcp.build import CloudBuildImageBuilder
+from coral_providers_gcp.build import DockerHubImageBuilder
 from coral_providers_gcp.cleanup import GCPCleanupManager
 from coral_providers_gcp.execute import BatchExecutor, GKEExecutor
 from coral_providers_gcp.logs import GCPLogStreamer
@@ -17,7 +17,7 @@ from coral_providers_gcp.logs import GCPLogStreamer
 class GCPConfig:
     project: str
     region: str
-    artifact_repo: str
+    artifact_repo: str | None
     gcs_bucket: str
     execution: str
     service_account: str | None = None
@@ -41,13 +41,13 @@ class GCPProvider(Provider):
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser(
                 credentials_path
             )
-        missing = [k for k in ["project", "region", "artifact_repo", "gcs_bucket"] if k not in data]
+        missing = [k for k in ["project", "region", "gcs_bucket"] if k not in data]
         if missing:
             raise ConfigError(f"Missing GCP config keys: {', '.join(missing)}")
         self.config = GCPConfig(
             project=data["project"],
             region=data["region"],
-            artifact_repo=data["artifact_repo"],
+            artifact_repo=data.get("artifact_repo"),
             gcs_bucket=data["gcs_bucket"],
             execution=data.get("execution", "batch"),
             service_account=data.get("service_account"),
@@ -60,13 +60,8 @@ class GCPProvider(Provider):
         return self.config
 
     def get_builder(self):
-        cfg = self._ensure_config()
-        return CloudBuildImageBuilder(
-            project=cfg.project,
-            region=cfg.region,
-            artifact_repo=cfg.artifact_repo,
-            gcs_bucket=cfg.gcs_bucket,
-        )
+        _cfg = self._ensure_config()
+        return DockerHubImageBuilder()
 
     def get_artifacts(self):
         cfg = self._ensure_config()

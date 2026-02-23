@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -12,11 +13,29 @@ class PrimeClient:
     api_key: str
     team_id: Optional[str] = None
     base_url: str = "https://api.primeintellect.ai"
+    app_base_url: str = "https://app.primeintellect.ai"
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
         if self.team_id:
             headers["X-Prime-Team-ID"] = self.team_id
+        return headers
+
+    def _app_headers(self) -> Dict[str, str]:
+        auth_override = os.environ.get("CORAL_PRIME_APP_AUTHORIZATION", "").strip()
+        cookie = os.environ.get("CORAL_PRIME_APP_COOKIE", "").strip()
+        auth_header = auth_override or f"Bearer {self.api_key}"
+        headers = {
+            "Authorization": auth_header,
+            "User-Agent": "Mozilla/5.0 (Coral CLI)",
+            "Accept": "application/json",
+            "Origin": self.app_base_url,
+            "Referer": f"{self.app_base_url}/",
+        }
+        if self.team_id:
+            headers["X-Prime-Team-ID"] = self.team_id
+        if cookie:
+            headers["Cookie"] = cookie
         return headers
 
     def _raise_for_status(self, resp: requests.Response) -> None:
@@ -33,6 +52,123 @@ class PrimeClient:
             f"\nResponse body: {body_text}"
         )
         raise requests.HTTPError(message, response=resp)
+
+    def _trpc_unpack_result(self, payload: Any, path: str) -> Any:
+        item: Dict[str, Any] | None = None
+        if isinstance(payload, list):
+            if payload and isinstance(payload[0], dict):
+                item = payload[0]
+        elif isinstance(payload, dict):
+            if "0" in payload and isinstance(payload["0"], dict):
+                item = payload["0"]
+            else:
+                item = payload
+        if not isinstance(item, dict):
+            raise requests.HTTPError(
+                f"Unexpected TRPC response shape for {path}: {payload!r}"
+            )
+
+        if "error" in item:
+            error_payload = item.get("error")
+            raise requests.HTTPError(
+                f"Prime TRPC error on {path}: {json.dumps(error_payload, ensure_ascii=True)}"
+            )
+
+        result = item.get("result")
+        if not isinstance(result, dict):
+            raise requests.HTTPError(
+                f"Missing TRPC result payload for {path}: {item!r}"
+            )
+        data = result.get("data")
+        if isinstance(data, dict) and "json" in data:
+            return data["json"]
+        return data
+
+    def _trpc_query(self, path: str, input_json: Any = None) -> Any:
+        input_payload = json.dumps({"0": {"json": input_json}}, separators=(",", ":"))
+        resp = requests.get(
+            f"{self.app_base_url}/api/trpc/{path}",
+            headers=self._app_headers(),
+            params={"batch": "1", "input": input_payload},
+            timeout=30,
+        )
+        if resp.status_code in {401, 403}:
+            auth_override = os.environ.get("CORAL_PRIME_APP_AUTHORIZATION", "").strip()
+            cookie = os.environ.get("CORAL_PRIME_APP_COOKIE", "").strip()
+            if not auth_override and not cookie:
+                raise requests.HTTPError(
+                    "Prime template TRPC authentication failed. Set CORAL_PRIME_APP_COOKIE "
+                    "or CORAL_PRIME_APP_AUTHORIZATION with a valid app session credential."
+                )
+        self._raise_for_status(resp)
+        return self._trpc_unpack_result(resp.json(), path)
+
+    def _trpc_mutation(
+        self,
+        path: str,
+        input_json: Dict[str, Any],
+        meta_values: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        body: Dict[str, Any] = {"0": {"json": input_json}}
+        if meta_values:
+            body["0"]["meta"] = {"values": meta_values, "v": 1}
+        resp = requests.post(
+            f"{self.app_base_url}/api/trpc/{path}?batch=1",
+            headers=self._app_headers(),
+            json=body,
+            timeout=30,
+        )
+        if resp.status_code in {401, 403}:
+            auth_override = os.environ.get("CORAL_PRIME_APP_AUTHORIZATION", "").strip()
+            cookie = os.environ.get("CORAL_PRIME_APP_COOKIE", "").strip()
+            if not auth_override and not cookie:
+                raise requests.HTTPError(
+                    "Prime template TRPC authentication failed. Set CORAL_PRIME_APP_COOKIE "
+                    "or CORAL_PRIME_APP_AUTHORIZATION with a valid app session credential."
+                )
+        self._raise_for_status(resp)
+        return self._trpc_unpack_result(resp.json(), path)
+
+    def _template_meta_values(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        nullable_fields = ("containerStartCommand", "registryCredentialsId", "teamId")
+        for field in nullable_fields:
+            if payload.get(field) is None:
+                values[field] = ["undefined"]
+        restrictions = payload.get("resourceRestrictions")
+        if isinstance(restrictions, dict):
+            for field in ("ram", "disk", "vcpu"):
+                if restrictions.get(field) is None:
+                    values[f"resourceRestrictions.{field}"] = ["undefined"]
+        return values
+
+    def list_templates(self) -> List[Dict[str, Any]]:
+        data = self._trpc_query("templates.getTemplates", None)
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        return []
+
+    def create_template(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        data = self._trpc_mutation(
+            "templates.createTemplate",
+            payload,
+            meta_values=self._template_meta_values(payload),
+        )
+        if isinstance(data, dict):
+            return data
+        raise requests.HTTPError(f"Unexpected createTemplate payload: {data!r}")
+
+    def update_template(self, template_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        update_payload = dict(payload)
+        update_payload["id"] = template_id
+        data = self._trpc_mutation(
+            "templates.updateTemplate",
+            update_payload,
+            meta_values=self._template_meta_values(update_payload),
+        )
+        if isinstance(data, dict):
+            return data
+        raise requests.HTTPError(f"Unexpected updateTemplate payload: {data!r}")
 
     def availability_gpus(
         self,
@@ -109,66 +245,6 @@ class PrimeClient:
         )
         self._raise_for_status(resp)
         return resp.json()
-
-    def list_images(self) -> List[Dict[str, Any]]:
-        resp = requests.get(
-            f"{self.base_url}/api/v1/images",
-            headers=self._headers(),
-            timeout=30,
-        )
-        self._raise_for_status(resp)
-        data = resp.json()
-        return data.get("data") or data.get("items") or []
-
-    def create_image_build(
-        self,
-        image_name: str,
-        image_tag: str,
-        dockerfile_path: str = "Dockerfile",
-        team_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "image_name": image_name,
-            "image_tag": image_tag,
-            "dockerfile_path": dockerfile_path,
-        }
-        if team_id:
-            payload["teamId"] = team_id
-        resp = requests.post(
-            f"{self.base_url}/api/v1/images/build",
-            headers=self._headers(),
-            json=payload,
-            timeout=30,
-        )
-        self._raise_for_status(resp)
-        return resp.json()
-
-    def get_image_build(self, build_id: str) -> Dict[str, Any]:
-        resp = requests.get(
-            f"{self.base_url}/api/v1/images/build/{build_id}",
-            headers=self._headers(),
-            timeout=30,
-        )
-        self._raise_for_status(resp)
-        return resp.json()
-
-    def start_image_build(self, build_id: str) -> Dict[str, Any]:
-        resp = requests.post(
-            f"{self.base_url}/api/v1/images/build/{build_id}/start",
-            headers=self._headers(),
-            timeout=30,
-        )
-        self._raise_for_status(resp)
-        return resp.json()
-
-    def upload_build_context(self, upload_url: str, archive_path: str) -> None:
-        with open(archive_path, "rb") as archive:
-            resp = requests.put(
-                upload_url,
-                data=archive,
-                timeout=300,
-            )
-        self._raise_for_status(resp)
 
     def get_pod_logs(self, pod_id: str, tail: int = 200) -> str:
         resp = requests.get(

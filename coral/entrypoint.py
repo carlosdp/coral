@@ -167,38 +167,37 @@ class RunSession:
         image_hash = build_plan_hash(image)
         if image_hash in self._image_refs:
             return self._image_refs[image_hash]
-        self._status("Building image")
+        self._status("Resolving image")
         if self.verbose:
             from coral.logging import get_console
 
             get_console().print(f"[info]Image hash:[/info] {image_hash}")
-        image_cache = self._load_index(IMAGE_INDEX)
-        if not self.no_cache and image_hash in image_cache:
-            cached = image_cache[image_hash]
-            self._image_refs[image_hash] = ImageRef(
-                uri=cached["uri"],
-                digest=cached["digest"],
-                metadata=cached.get("metadata", {}),
-            )
-            self._status("Using cached image")
-            if self.verbose:
-                from coral.logging import get_console
-
-                get_console().print(
-                    f"[info]Using cached image:[/info] {self._image_refs[image_hash].uri}"
-                )
-            return self._image_refs[image_hash]
 
         _sync_sources, copy_sources, _sync_ignores = self._resolve_local_sources(image)
         builder = self.provider.get_builder()
         image_ref = builder.resolve_image(image, copy_sources=copy_sources)
-        self._status("Built image")
+        if getattr(self.provider, "name", "") == "prime":
+            ensure_template = getattr(self.provider, "ensure_custom_template", None)
+            if callable(ensure_template):
+                self._status("Syncing Prime template")
+                template_id = ensure_template(image_ref)
+                metadata = dict(image_ref.metadata)
+                metadata["prime_custom_template_id"] = template_id
+                image_ref = ImageRef(uri=image_ref.uri, digest=image_ref.digest, metadata=metadata)
+
+        self._status("Image ready")
         if self.verbose:
             from coral.logging import get_console
 
             get_console().print(
-                f"[info]Built image:[/info] {image_ref.uri}"
+                f"[info]Resolved image:[/info] {image_ref.uri}"
             )
+            template_id = image_ref.metadata.get("prime_custom_template_id")
+            if template_id:
+                get_console().print(
+                    f"[info]Prime custom template:[/info] {template_id}"
+                )
+        image_cache = self._load_index(IMAGE_INDEX)
         image_cache[image_hash] = {
             "uri": image_ref.uri,
             "digest": image_ref.digest,
@@ -223,13 +222,23 @@ class RunSession:
 
             get_console().print("[info]Preparing image and bundle...[/info]")
         self._image(image)
-        self._bundle(image)
+        upload_bundle = getattr(self.provider, "name", "") != "prime"
+        self._bundle(image, upload=upload_bundle)
+
+    def prepare_image(self) -> ImageRef:
+        image = self.app.image
+        self._status("Preparing image")
+        if self.verbose:
+            from coral.logging import get_console
+
+            get_console().print("[info]Preparing image...[/info]")
+        return self._image(image)
 
     def submit(self, spec: FunctionSpec, args: tuple, kwargs: dict) -> RunHandle:
         image = spec.image or self.app.image
         provider_name = getattr(self.provider, "name", "")
         prime_no_build = provider_name == "prime" and not spec.build_image
-        if self.detached and not spec.build_image and provider_name == "prime":
+        if self.detached and prime_no_build:
             raise CoralError(
                 "Prime detached runs are not supported when build_image is disabled."
             )
@@ -242,7 +251,7 @@ class RunSession:
         bundle_ref = self._bundle(
             image,
             include_copy_sources=not spec.build_image,
-            upload=not prime_no_build,
+            upload=provider_name != "prime" and not prime_no_build,
             extra_roots=extra_bundle_roots,
         )
         self._status("Spawning container")
@@ -255,7 +264,7 @@ class RunSession:
 
         call_id = uuid.uuid4().hex
         result_uri = ""
-        if not prime_no_build:
+        if provider_name != "prime" and not prime_no_build:
             result_uri = self.provider.get_artifacts().result_uri(call_id)
         call_spec = CallSpec(
             call_id=call_id,
